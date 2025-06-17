@@ -1,10 +1,15 @@
-import React, { useState } from 'react';
-import { Shield, AlertTriangle, CheckCircle, Clock, MapPin, Users, TrendingUp } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Shield, AlertTriangle, CheckCircle, Clock, MapPin, Users, TrendingUp, Bell } from 'lucide-react';
+import { useAuth } from '../hooks/useAuth';
+import { useAuthModal } from '../components/AuthModal';
 import EmergencyButton from '../components/EmergencyButton';
 import IncidentCard from '../components/IncidentCard';
 import SafetyStatus from '../components/SafetyStatus';
 
 const Dashboard = () => {
+  const { isAuthenticated, profile } = useAuth();
+  const { openSignUp, AuthModal } = useAuthModal();
+  const [showWelcome, setShowWelcome] = useState(false);
   const [incidents] = useState([
     {
       id: 1,
@@ -42,16 +47,72 @@ const Dashboard = () => {
     responseTime: '4 min',
   };
 
+  useEffect(() => {
+    // Show welcome message for new users
+    if (!isAuthenticated && !localStorage.getItem('welcomeShown')) {
+      setShowWelcome(true);
+      localStorage.setItem('welcomeShown', 'true');
+    }
+  }, [isAuthenticated]);
+
+  const handleJoinCommunity = () => {
+    setShowWelcome(false);
+    openSignUp();
+  };
+
   return (
     <div className="pb-20">
+      {/* Welcome Banner for Anonymous Users */}
+      {showWelcome && (
+        <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white p-6 m-4 rounded-2xl shadow-lg">
+          <div className="flex items-start space-x-4">
+            <div className="bg-white bg-opacity-20 p-3 rounded-lg">
+              <Shield className="w-8 h-8 text-white" />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-lg font-bold mb-2">Welcome to SafeGuard Eldos!</h3>
+              <p className="text-blue-100 text-sm mb-4">
+                Join our community to unlock features like incident verification, safe route creation, and community groups.
+              </p>
+              <div className="flex space-x-3">
+                <button
+                  onClick={handleJoinCommunity}
+                  className="bg-white text-blue-600 px-4 py-2 rounded-lg font-medium hover:bg-blue-50 transition-colors"
+                >
+                  Join Community
+                </button>
+                <button
+                  onClick={() => setShowWelcome(false)}
+                  className="text-blue-100 hover:text-white transition-colors"
+                >
+                  Maybe Later
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="bg-gradient-to-r from-red-600 to-red-700 text-white p-6 rounded-b-3xl">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold">SafeGuard Eldos</h1>
-            <p className="text-red-100 text-sm">Eldorado Park Community Safety</p>
+            <p className="text-red-100 text-sm">
+              {isAuthenticated && profile 
+                ? `Welcome back, Community ${profile.community_role}`
+                : 'Eldorado Park Community Safety'
+              }
+            </p>
           </div>
-          <Shield className="w-10 h-10 text-red-200" />
+          <div className="flex items-center space-x-3">
+            {isAuthenticated && (
+              <div className="bg-red-500 bg-opacity-30 p-2 rounded-lg">
+                <Bell className="w-6 h-6 text-red-100" />
+              </div>
+            )}
+            <Shield className="w-10 h-10 text-red-200" />
+          </div>
         </div>
         
         <SafetyStatus />
@@ -61,6 +122,25 @@ const Dashboard = () => {
       <div className="px-6 -mt-8 relative z-10">
         <EmergencyButton />
       </div>
+
+      {/* User Status */}
+      {isAuthenticated && profile && (
+        <div className="px-6 mt-6">
+          <div className="bg-gradient-to-r from-green-50 to-blue-50 p-4 rounded-xl border border-green-200">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-semibold text-gray-900">Community Status</h3>
+                <p className="text-sm text-gray-600">
+                  Reputation: {profile.reputation_score} points • {profile.community_role}
+                </p>
+              </div>
+              <div className="bg-green-500 p-2 rounded-lg">
+                <CheckCircle className="w-5 h-5 text-white" />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Quick Stats */}
       <div className="px-6 mt-6">
@@ -130,7 +210,9 @@ const Dashboard = () => {
             </div>
             <div className="flex-1">
               <h3 className="font-semibold text-blue-900">Community Patrol Tonight</h3>
-              <p className="text-blue-700 text-sm mt-1">Join our neighborhood watch patrol at 7 PM. Meet at Extension 8 Community Hall.</p>
+              <p className="text-blue-700 text-sm mt-1">
+                Join our neighborhood watch patrol at 7 PM. Meet at Extension 8 Community Hall.
+              </p>
               <button className="mt-2 text-blue-600 text-sm font-medium hover:text-blue-800 transition-colors">
                 Learn More →
               </button>
@@ -138,6 +220,9 @@ const Dashboard = () => {
           </div>
         </div>
       </div>
+
+      {/* Auth Modal */}
+      <AuthModal />
     </div>
   );
 };
