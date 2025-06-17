@@ -175,7 +175,7 @@ export const getProfile = async (userId: string) => {
     .from('profiles')
     .select('*')
     .eq('user_id', userId)
-    .single();
+    .maybeSingle();
   return { data, error };
 };
 

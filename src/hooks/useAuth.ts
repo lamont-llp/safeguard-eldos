@@ -47,7 +47,7 @@ export const useAuth = () => {
     try {
       const { data: existingProfile, error } = await getProfile(userId);
       
-      if (error && error.code === 'PGRST116') {
+      if (!existingProfile && !error) {
         // Profile doesn't exist, create one
         const { data: newProfile, error: createError } = await createProfile({
           user_id: userId,
@@ -64,7 +64,7 @@ export const useAuth = () => {
         }
       } else if (!error && existingProfile) {
         setProfile(existingProfile);
-      } else {
+      } else if (error) {
         console.error('Error loading profile:', error);
       }
     } catch (error) {
