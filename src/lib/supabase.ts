@@ -202,25 +202,7 @@ export const createIncident = async (incidentData: Partial<Incident>) => {
 export const getIncidents = async (limit = 50) => {
   const { data, error } = await supabase
     .from('incidents')
-    .select(`
-      id,
-      reporter_id,
-      incident_type,
-      severity,
-      title,
-      description,
-      location_address,
-      location_area,
-      is_verified,
-      verification_count,
-      is_urgent,
-      is_resolved,
-      resolved_at,
-      media_urls,
-      blockchain_hash,
-      created_at,
-      updated_at
-    `)
+    .select('*')
     .order('created_at', { ascending: false })
     .limit(limit);
   return { data, error };
@@ -235,25 +217,7 @@ export const getIncidentsNearLocation = async (
   // For now, we'll use a simple query. In production, you'd use PostGIS functions
   const { data, error } = await supabase
     .from('incidents')
-    .select(`
-      id,
-      reporter_id,
-      incident_type,
-      severity,
-      title,
-      description,
-      location_address,
-      location_area,
-      is_verified,
-      verification_count,
-      is_urgent,
-      is_resolved,
-      resolved_at,
-      media_urls,
-      blockchain_hash,
-      created_at,
-      updated_at
-    `)
+    .select('*')
     .order('created_at', { ascending: false })
     .limit(limit);
   
@@ -295,25 +259,7 @@ export const verifyIncident = async (
 export const getSafeRoutes = async () => {
   const { data, error } = await supabase
     .from('safe_routes')
-    .select(`
-      id,
-      creator_id,
-      name,
-      description,
-      start_address,
-      end_address,
-      distance_meters,
-      estimated_duration_minutes,
-      safety_score,
-      lighting_quality,
-      patrol_coverage,
-      cctv_coverage,
-      recent_incidents_count,
-      is_active,
-      time_restrictions,
-      created_at,
-      updated_at
-    `)
+    .select('*')
     .eq('is_active', true)
     .order('safety_score', { ascending: false });
   return { data, error };
@@ -363,21 +309,7 @@ export const rateSafeRoute = async (routeId: string, ratings: {
 export const getCommunityGroups = async () => {
   const { data, error } = await supabase
     .from('community_groups')
-    .select(`
-      id,
-      name,
-      description,
-      area_name,
-      leader_id,
-      member_count,
-      is_active,
-      meeting_schedule,
-      patrol_schedule,
-      contact_info,
-      group_type,
-      created_at,
-      updated_at
-    `)
+    .select('*')
     .eq('is_active', true)
     .order('member_count', { ascending: false });
   return { data, error };
@@ -413,21 +345,7 @@ export const getCommunityEvents = async (limit = 20) => {
   const { data, error } = await supabase
     .from('community_events')
     .select(`
-      id,
-      group_id,
-      organizer_id,
-      title,
-      description,
-      event_type,
-      location_address,
-      start_time,
-      end_time,
-      max_attendees,
-      current_attendees,
-      is_public,
-      requirements,
-      created_at,
-      updated_at,
+      *,
       community_groups (name, area_name)
     `)
     .eq('is_public', true)
