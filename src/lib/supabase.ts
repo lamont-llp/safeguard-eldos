@@ -42,7 +42,7 @@ export interface Incident {
   severity: 'low' | 'medium' | 'high' | 'critical';
   title: string;
   description?: string;
-  location_point: any; // PostGIS geography type
+  location_point: { type: 'Point'; coordinates: [number, number] }; // PostGIS geography type
   location_address: string;
   location_area?: string;
   is_verified: boolean;
@@ -61,9 +61,9 @@ export interface SafeRoute {
   creator_id?: string;
   name: string;
   description?: string;
-  start_point: any; // PostGIS geography type
-  end_point: any; // PostGIS geography type
-  route_path?: any; // PostGIS geography type
+  start_point: { type: 'Point'; coordinates: [number, number] }; // PostGIS geography type
+  end_point: { type: 'Point'; coordinates: [number, number] }; // PostGIS geography type
+  route_path?: { type: 'LineString'; coordinates: [number, number][] }; // PostGIS geography type
   start_address: string;
   end_address: string;
   distance_meters?: number;
@@ -83,7 +83,7 @@ export interface CommunityGroup {
   id: string;
   name: string;
   description?: string;
-  area_polygon?: any; // PostGIS geography type
+  area_polygon?: { type: 'Polygon'; coordinates: [number, number][][] }; // PostGIS geography type
   area_name: string;
   leader_id?: string;
   member_count: number;
@@ -103,7 +103,7 @@ export interface CommunityEvent {
   title: string;
   description?: string;
   event_type: 'meeting' | 'patrol' | 'workshop' | 'training' | 'social' | 'emergency_response';
-  location_point?: any; // PostGIS geography type
+  location_point?: { type: 'Point'; coordinates: [number, number] }; // PostGIS geography type
   location_address?: string;
   start_time: string;
   end_time?: string;
