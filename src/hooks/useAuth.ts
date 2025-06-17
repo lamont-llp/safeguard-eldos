@@ -11,15 +11,19 @@ export const useAuth = () => {
   useEffect(() => {
     // Get initial session
     const getInitialSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      setSession(session);
-      setUser(session?.user ?? null);
-      
-      if (session?.user) {
-        await loadUserProfile(session.user.id);
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        setSession(session);
+        setUser(session?.user ?? null);
+        
+        if (session?.user) {
+          await loadUserProfile(session.user.id);
+        }
+      } catch (error) {
+        console.error('Error getting initial session:', error);
+      } finally {
+        setLoading(false);
       }
-      
-      setLoading(false);
     };
 
     getInitialSession();
@@ -27,6 +31,7 @@ export const useAuth = () => {
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
+        console.log('Auth state changed:', event, session?.user?.id);
         setSession(session);
         setUser(session?.user ?? null);
         
@@ -36,7 +41,10 @@ export const useAuth = () => {
           setProfile(null);
         }
         
-        setLoading(false);
+        // Only set loading to false after handling the auth change
+        if (loading) {
+          setLoading(false);
+        }
       }
     );
 
@@ -49,6 +57,7 @@ export const useAuth = () => {
       
       if (!existingProfile && !error) {
         // Profile doesn't exist, create one
+        console.log('Creating new profile for user:', userId);
         const { data: newProfile, error: createError } = await createProfile({
           user_id: userId,
           reputation_score: 0,
@@ -60,9 +69,11 @@ export const useAuth = () => {
         if (createError) {
           console.error('Error creating profile:', createError);
         } else {
+          console.log('Profile created successfully:', newProfile);
           setProfile(newProfile);
         }
       } else if (!error && existingProfile) {
+        console.log('Profile loaded successfully:', existingProfile);
         setProfile(existingProfile);
       } else if (error) {
         console.error('Error loading profile:', error);
@@ -73,7 +84,6 @@ export const useAuth = () => {
   };
 
   const signUp = async (email: string, password: string) => {
-    setLoading(true);
     try {
       const { data, error } = await supabase.auth.signUp({
         email,
@@ -88,13 +98,10 @@ export const useAuth = () => {
       return { data, error: null };
     } catch (error: any) {
       return { data: null, error };
-    } finally {
-      setLoading(false);
     }
   };
 
   const signIn = async (email: string, password: string) => {
-    setLoading(true);
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
@@ -106,13 +113,10 @@ export const useAuth = () => {
       return { data, error: null };
     } catch (error: any) {
       return { data: null, error };
-    } finally {
-      setLoading(false);
     }
   };
 
   const signOut = async () => {
-    setLoading(true);
     try {
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
@@ -124,8 +128,6 @@ export const useAuth = () => {
       return { error: null };
     } catch (error: any) {
       return { error };
-    } finally {
-      setLoading(false);
     }
   };
 
