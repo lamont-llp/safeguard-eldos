@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, AlertTriangle, CheckCircle, Clock, MapPin, Users, TrendingUp, Bell } from 'lucide-react';
+import { Shield, AlertTriangle, CheckCircle, Clock, MapPin, Users, TrendingUp, Bell, RefreshCw } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
+import { useIncidents } from '../hooks/useIncidents';
 import { useAuthModal } from '../components/AuthModal';
 import EmergencyButton from '../components/EmergencyButton';
 import IncidentCard from '../components/IncidentCard';
@@ -8,44 +9,19 @@ import SafetyStatus from '../components/SafetyStatus';
 
 const Dashboard = () => {
   const { isAuthenticated, profile } = useAuth();
+  const { 
+    incidents, 
+    loading, 
+    error, 
+    getRecentIncidents, 
+    getIncidentsByType,
+    getIncidentsBySeverity,
+    requestNotificationPermission,
+    refresh
+  } = useIncidents();
   const { openSignUp, AuthModal } = useAuthModal();
   const [showWelcome, setShowWelcome] = useState(false);
-  const [incidents] = useState([
-    {
-      id: 1,
-      type: 'suspicious_activity',
-      location: 'Klipriver Road & Extension 8',
-      time: '2 minutes ago',
-      severity: 'medium',
-      verified: true,
-      description: 'Unknown individuals loitering near school',
-    },
-    {
-      id: 2,
-      type: 'theft',
-      location: 'Eldorado Shopping Centre',
-      time: '15 minutes ago',
-      severity: 'high',
-      verified: true,
-      description: 'Reported bag snatching incident',
-    },
-    {
-      id: 3,
-      type: 'resolved',
-      location: 'Extension 4, Block B',
-      time: '1 hour ago',
-      severity: 'low',
-      verified: true,
-      description: 'All clear - patrol completed',
-    },
-  ]);
-
-  const safetyMetrics = {
-    activeIncidents: 3,
-    communityMembers: 1247,
-    safeRoutes: 12,
-    responseTime: '4 min',
-  };
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     // Show welcome message for new users
@@ -55,9 +31,41 @@ const Dashboard = () => {
     }
   }, [isAuthenticated]);
 
+  useEffect(() => {
+    // Request notification permission for authenticated users
+    if (isAuthenticated) {
+      requestNotificationPermission();
+    }
+  }, [isAuthenticated]);
+
   const handleJoinCommunity = () => {
     setShowWelcome(false);
     openSignUp();
+  };
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await refresh();
+    setRefreshing(false);
+  };
+
+  // Calculate safety metrics
+  const recentIncidents = getRecentIncidents(24);
+  const criticalIncidents = getIncidentsBySeverity('critical');
+  const highIncidents = getIncidentsBySeverity('high');
+  const activeIncidents = incidents.filter(i => !i.is_resolved);
+  const resolvedToday = incidents.filter(i => 
+    i.is_resolved && 
+    new Date(i.created_at).toDateString() === new Date().toDateString()
+  );
+
+  const safetyMetrics = {
+    activeIncidents: activeIncidents.length,
+    communityMembers: 1247, // This would come from a real count
+    safeRoutes: 12, // This would come from safe routes data
+    responseTime: '4 min', // This would be calculated from actual data
+    recentIncidents: recentIncidents.length,
+    resolvedToday: resolvedToday.length
   };
 
   return (
@@ -72,7 +80,7 @@ const Dashboard = () => {
             <div className="flex-1">
               <h3 className="text-lg font-bold mb-2">Welcome to SafeGuard Eldos!</h3>
               <p className="text-blue-100 text-sm mb-4">
-                Join our community to unlock features like incident verification, safe route creation, and community groups.
+                Join our community to report incidents, verify reports, and help keep Eldorado Park safe.
               </p>
               <div className="flex space-x-3">
                 <button
@@ -168,8 +176,8 @@ const Dashboard = () => {
           <div className="bg-white p-4 rounded-xl shadow-sm border">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-gray-500 text-sm">Safe Routes</p>
-                <p className="text-2xl font-bold text-gray-900">{safetyMetrics.safeRoutes}</p>
+                <p className="text-gray-500 text-sm">Resolved Today</p>
+                <p className="text-2xl font-bold text-gray-900">{safetyMetrics.resolvedToday}</p>
               </div>
               <CheckCircle className="w-8 h-8 text-green-500" />
             </div>
@@ -191,14 +199,54 @@ const Dashboard = () => {
       <div className="px-6 mt-8">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-bold text-gray-900">Recent Activity</h2>
-          <TrendingUp className="w-5 h-5 text-gray-400" />
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="flex items-center space-x-1 text-gray-600 hover:text-gray-800 transition-colors"
+          >
+            <RefreshCw className={`w-5 h-5 ${refreshing ? 'animate-spin' : ''}`} />
+            <span className="text-sm">Refresh</span>
+          </button>
         </div>
-        
-        <div className="space-y-3">
-          {incidents.map((incident) => (
-            <IncidentCard key={incident.id} incident={incident} />
-          ))}
-        </div>
+
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+            <div className="flex items-center space-x-2">
+              <AlertTriangle className="w-5 h-5 text-red-600" />
+              <span className="text-red-800 text-sm">Failed to load incidents: {error}</span>
+            </div>
+          </div>
+        )}
+
+        {loading ? (
+          <div className="space-y-3">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="bg-white p-4 rounded-xl shadow-sm border animate-pulse">
+                <div className="flex space-x-3">
+                  <div className="w-8 h-8 bg-gray-200 rounded"></div>
+                  <div className="flex-1 space-y-2">
+                    <div className="h-4 bg-gray-200 rounded w-3/4"></div>
+                    <div className="h-3 bg-gray-200 rounded w-1/2"></div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : incidents.length > 0 ? (
+          <div className="space-y-3">
+            {incidents.slice(0, 10).map((incident) => (
+              <IncidentCard key={incident.id} incident={incident} />
+            ))}
+          </div>
+        ) : (
+          <div className="text-center py-8">
+            <Shield className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+            <h3 className="text-lg font-medium text-gray-900 mb-2">No Recent Incidents</h3>
+            <p className="text-gray-600">
+              Great news! No incidents have been reported recently in your area.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Community Update Banner */}

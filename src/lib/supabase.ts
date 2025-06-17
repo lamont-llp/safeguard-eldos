@@ -214,25 +214,44 @@ export const getIncidentsNearLocation = async (
   radiusMeters = 5000,
   limit = 50
 ) => {
-  const { data, error } = await supabase.rpc('get_incidents_near_location', {
-    lat: latitude,
-    lng: longitude,
-    radius_meters: radiusMeters,
-    result_limit: limit
-  });
+  // For now, we'll use a simple query. In production, you'd use PostGIS functions
+  const { data, error } = await supabase
+    .from('incidents')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  
   return { data, error };
 };
 
-export const verifyIncident = async (incidentId: string, verificationType: 'confirm' | 'dispute' | 'additional_info', notes?: string) => {
+export const verifyIncident = async (
+  incidentId: string, 
+  verificationType: 'confirm' | 'dispute' | 'additional_info', 
+  notes?: string
+) => {
+  // First, get the current user's profile
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Must be authenticated');
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('id')
+    .eq('user_id', user.id)
+    .single();
+
+  if (!profile) throw new Error('Profile not found');
+
   const { data, error } = await supabase
     .from('incident_verifications')
     .insert([{
       incident_id: incidentId,
+      verifier_id: profile.id,
       verification_type: verificationType,
       notes
     }])
     .select()
     .single();
+  
   return { data, error };
 };
 
@@ -262,10 +281,23 @@ export const rateSafeRoute = async (routeId: string, ratings: {
   comments?: string;
   time_of_day?: 'morning' | 'afternoon' | 'evening' | 'night';
 }) => {
+  // Get current user's profile
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Must be authenticated');
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('id')
+    .eq('user_id', user.id)
+    .single();
+
+  if (!profile) throw new Error('Profile not found');
+
   const { data, error } = await supabase
     .from('route_ratings')
     .insert([{
       route_id: routeId,
+      rater_id: profile.id,
       ...ratings
     }])
     .select()
@@ -284,10 +316,23 @@ export const getCommunityGroups = async () => {
 };
 
 export const joinCommunityGroup = async (groupId: string) => {
+  // Get current user's profile
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Must be authenticated');
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('id')
+    .eq('user_id', user.id)
+    .single();
+
+  if (!profile) throw new Error('Profile not found');
+
   const { data, error } = await supabase
     .from('group_memberships')
     .insert([{
       group_id: groupId,
+      member_id: profile.id,
       role: 'member'
     }])
     .select()
@@ -311,10 +356,23 @@ export const getCommunityEvents = async (limit = 20) => {
 };
 
 export const registerForEvent = async (eventId: string, status: 'attending' | 'maybe' | 'not_attending' = 'attending') => {
+  // Get current user's profile
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Must be authenticated');
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('id')
+    .eq('user_id', user.id)
+    .single();
+
+  if (!profile) throw new Error('Profile not found');
+
   const { data, error } = await supabase
     .from('event_attendees')
     .insert([{
       event_id: eventId,
+      attendee_id: profile.id,
       status
     }])
     .select()
