@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase, getCurrentUser, getProfile, createProfile, Profile } from '../lib/supabase';
 
@@ -9,21 +9,24 @@ export const useAuth = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   
-  // Track if we're currently creating a profile to prevent race conditions
-  const [creatingProfile, setCreatingProfile] = useState(false);
+  // Use refs to track state without causing re-renders
+  const creatingProfileRef = useRef(false);
+  const mountedRef = useRef(true);
+  const initializedRef = useRef(false);
 
-  const loadUserProfile = useCallback(async (userId: string, mounted: { current: boolean }) => {
-    if (!mounted.current) return;
+  // Memoize the profile loading function - no dependencies to prevent recreations
+  const loadUserProfile = useCallback(async (userId: string) => {
+    if (!mountedRef.current || creatingProfileRef.current) return;
     
     try {
       const { data: existingProfile, error } = await getProfile(userId);
       
-      if (!mounted.current) return;
+      if (!mountedRef.current) return;
       
-      if (!existingProfile && !error && !creatingProfile) {
+      if (!existingProfile && !error && !creatingProfileRef.current) {
         // Profile doesn't exist, create one
         console.log('Creating new profile for user:', userId);
-        setCreatingProfile(true);
+        creatingProfileRef.current = true;
         
         const { data: newProfile, error: createError } = await createProfile({
           user_id: userId,
@@ -33,9 +36,9 @@ export const useAuth = () => {
           language_preference: 'en'
         });
         
-        if (!mounted.current) return;
+        creatingProfileRef.current = false;
         
-        setCreatingProfile(false);
+        if (!mountedRef.current) return;
         
         if (createError) {
           console.error('Error creating profile:', createError);
@@ -53,22 +56,22 @@ export const useAuth = () => {
       }
     } catch (error) {
       console.error('Error in loadUserProfile:', error);
-      if (mounted.current) {
+      creatingProfileRef.current = false;
+      if (mountedRef.current) {
         setError('Failed to load user profile');
-        setCreatingProfile(false);
       }
     }
-  }, [creatingProfile]);
+  }, []); // Empty dependency array - function never recreates
 
   useEffect(() => {
-    const mounted = { current: true };
+    let authSubscription: any = null;
 
-    // Get initial session
-    const getInitialSession = async () => {
+    const initializeAuth = async () => {
       try {
+        // Get initial session
         const { data: { session }, error } = await supabase.auth.getSession();
         
-        if (!mounted.current) return;
+        if (!mountedRef.current) return;
         
         if (error) {
           console.error('Error getting session:', error);
@@ -77,57 +80,73 @@ export const useAuth = () => {
           return;
         }
 
+        // Set initial state
         setSession(session);
         setUser(session?.user ?? null);
         
+        // Load profile if user exists
         if (session?.user) {
-          await loadUserProfile(session.user.id, mounted);
+          await loadUserProfile(session.user.id);
         }
         
+        setLoading(false);
+        initializedRef.current = true;
+        
       } catch (error) {
-        console.error('Error in getInitialSession:', error);
-        if (mounted.current) {
+        console.error('Error in initializeAuth:', error);
+        if (mountedRef.current) {
           setError('Failed to initialize authentication');
-        }
-      } finally {
-        if (mounted.current) {
           setLoading(false);
         }
       }
     };
 
-    getInitialSession();
+    const setupAuthListener = () => {
+      // Listen for auth changes
+      const { data: { subscription } } = supabase.auth.onAuthStateChange(
+        async (event, session) => {
+          if (!mountedRef.current) return;
+          
+          console.log('Auth state changed:', event, session?.user?.id);
+          
+          // Skip initial session events if we've already initialized
+          if (event === 'INITIAL_SESSION' && initializedRef.current) {
+            return;
+          }
+          
+          // Clear any previous errors
+          setError(null);
+          
+          setSession(session);
+          setUser(session?.user ?? null);
+          
+          if (session?.user) {
+            await loadUserProfile(session.user.id);
+          } else {
+            setProfile(null);
+            creatingProfileRef.current = false;
+          }
+          
+          // Set loading to false after handling auth state change
+          if (mountedRef.current && !initializedRef.current) {
+            setLoading(false);
+            initializedRef.current = true;
+          }
+        }
+      );
+      
+      authSubscription = subscription;
+    };
 
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        if (!mounted.current) return;
-        
-        console.log('Auth state changed:', event, session?.user?.id);
-        
-        // Clear any previous errors
-        setError(null);
-        
-        setSession(session);
-        setUser(session?.user ?? null);
-        
-        if (session?.user) {
-          await loadUserProfile(session.user.id, mounted);
-        } else {
-          setProfile(null);
-          setCreatingProfile(false);
-        }
-        
-        // Set loading to false after handling auth state change
-        if (mounted.current) {
-          setLoading(false);
-        }
-      }
-    );
+    // Initialize auth and setup listener
+    initializeAuth();
+    setupAuthListener();
 
     return () => {
-      mounted.current = false;
-      subscription.unsubscribe();
+      mountedRef.current = false;
+      if (authSubscription) {
+        authSubscription.unsubscribe();
+      }
     };
   }, [loadUserProfile]);
 
@@ -178,7 +197,7 @@ export const useAuth = () => {
       setUser(null);
       setProfile(null);
       setSession(null);
-      setCreatingProfile(false);
+      creatingProfileRef.current = false;
       
       return { error: null };
     } catch (error: any) {
