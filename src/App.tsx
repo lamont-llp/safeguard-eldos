@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { useAuth } from './hooks/useAuth';
 import { IncidentsProvider } from './contexts/IncidentsContext';
+import { AuthProvider } from './contexts/AuthContext'
 import { useIncidentsRealtime } from './hooks/useIncidentsRealtime';
 import Dashboard from './pages/Dashboard';
 import ReportIncident from './pages/ReportIncident';
@@ -41,9 +42,11 @@ const AppContent = () => {
 
 function App() {
   return (
-    <IncidentsProvider>
-      <AppContent />
-    </IncidentsProvider>
+    <AuthProvider>
+      <IncidentsProvider>
+        <AppContent />
+      </IncidentsProvider>
+    </AuthProvider>
   );
 }
 
