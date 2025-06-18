@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase, getCurrentUser, getProfile, createProfile, Profile } from '../lib/supabase';
 
@@ -9,6 +9,49 @@ export const useAuth = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const loadProfile = useCallback(async (userId: string) => {
+    try {
+      console.log('Loading profile for user:', userId);
+      
+      const { data: existingProfile, error } = await getProfile(userId);
+      
+      if (!existingProfile && !error) {
+        // Profile doesn't exist, create one
+        console.log('Creating new profile...');
+        
+        const { data: newProfile, error: createError } = await createProfile({
+          user_id: userId,
+          reputation_score: 0,
+          community_role: 'member',
+          notification_radius: 1000,
+          language_preference: 'en'
+        });
+        
+        if (createError) {
+          console.error('Error creating profile:', createError);
+          setError('Failed to create user profile');
+          return null;
+        } else {
+          console.log('Profile created successfully');
+          setProfile(newProfile);
+          return newProfile;
+        }
+      } else if (!error && existingProfile) {
+        console.log('Profile loaded successfully');
+        setProfile(existingProfile);
+        return existingProfile;
+      } else if (error) {
+        console.error('Error loading profile:', error);
+        setError('Failed to load user profile');
+        return null;
+      }
+    } catch (error) {
+      console.error('Error in loadProfile:', error);
+      setError('Failed to load user profile');
+      return null;
+    }
+  }, []);
+
   useEffect(() => {
     let mounted = true;
     let authSubscription: any = null;
@@ -16,6 +59,8 @@ export const useAuth = () => {
     const initializeAuth = async () => {
       try {
         console.log('Initializing auth...');
+        setLoading(true);
+        setError(null);
         
         // Get initial session
         const { data: { session }, error: sessionError } = await supabase.auth.getSession();
@@ -40,13 +85,27 @@ export const useAuth = () => {
           await loadProfile(session.user.id);
         }
         
-        // Set up auth listener
-        const { data: { subscription } } = supabase.auth.onAuthStateChange(
-          async (event, session) => {
-            if (!mounted) return;
-            
-            console.log('Auth state changed:', event, session?.user?.id || 'No user');
-            
+      } catch (error) {
+        console.error('Auth initialization error:', error);
+        if (mounted) {
+          setError('Failed to initialize authentication');
+        }
+      } finally {
+        if (mounted) {
+          setLoading(false);
+        }
+      }
+    };
+
+    const setupAuthListener = () => {
+      // Set up auth listener
+      const { data: { subscription } } = supabase.auth.onAuthStateChange(
+        async (event, session) => {
+          if (!mounted) return;
+          
+          console.log('Auth state changed:', event, session?.user?.id || 'No user');
+          
+          try {
             setSession(session);
             setUser(session?.user ?? null);
             
@@ -55,69 +114,22 @@ export const useAuth = () => {
             } else {
               setProfile(null);
             }
+          } catch (error) {
+            console.error('Error handling auth state change:', error);
+            setError('Authentication state change failed');
           }
-        );
-        
-        authSubscription = subscription;
-        
-        if (mounted) {
-          setLoading(false);
         }
-        
-      } catch (error) {
-        console.error('Auth initialization error:', error);
-        if (mounted) {
-          setError('Failed to initialize authentication');
-          setLoading(false);
-        }
-      }
+      );
+      
+      authSubscription = subscription;
     };
 
-    const loadProfile = async (userId: string) => {
-      try {
-        console.log('Loading profile for user:', userId);
-        
-        const { data: existingProfile, error } = await getProfile(userId);
-        
-        if (!mounted) return;
-        
-        if (!existingProfile && !error) {
-          // Profile doesn't exist, create one
-          console.log('Creating new profile...');
-          
-          const { data: newProfile, error: createError } = await createProfile({
-            user_id: userId,
-            reputation_score: 0,
-            community_role: 'member',
-            notification_radius: 1000,
-            language_preference: 'en'
-          });
-          
-          if (!mounted) return;
-          
-          if (createError) {
-            console.error('Error creating profile:', createError);
-            setError('Failed to create user profile');
-          } else {
-            console.log('Profile created successfully');
-            setProfile(newProfile);
-          }
-        } else if (!error && existingProfile) {
-          console.log('Profile loaded successfully');
-          setProfile(existingProfile);
-        } else if (error) {
-          console.error('Error loading profile:', error);
-          setError('Failed to load user profile');
-        }
-      } catch (error) {
-        console.error('Error in loadProfile:', error);
-        if (mounted) {
-          setError('Failed to load user profile');
-        }
+    // Initialize auth and setup listener
+    initializeAuth().then(() => {
+      if (mounted) {
+        setupAuthListener();
       }
-    };
-
-    initializeAuth();
+    });
 
     return () => {
       mounted = false;
@@ -125,7 +137,7 @@ export const useAuth = () => {
         authSubscription.unsubscribe();
       }
     };
-  }, []); // Empty dependency array - only run once
+  }, [loadProfile]);
 
   const signUp = async (email: string, password: string) => {
     try {
@@ -142,8 +154,9 @@ export const useAuth = () => {
       
       return { data, error: null };
     } catch (error: any) {
-      setError(error.message || 'Sign up failed');
-      return { data: null, error };
+      const errorMessage = error.message || 'Sign up failed';
+      setError(errorMessage);
+      return { data: null, error: { message: errorMessage } };
     }
   };
 
@@ -159,8 +172,9 @@ export const useAuth = () => {
       
       return { data, error: null };
     } catch (error: any) {
-      setError(error.message || 'Sign in failed');
-      return { data: null, error };
+      const errorMessage = error.message || 'Sign in failed';
+      setError(errorMessage);
+      return { data: null, error: { message: errorMessage } };
     }
   };
 
@@ -177,8 +191,9 @@ export const useAuth = () => {
       
       return { error: null };
     } catch (error: any) {
-      setError(error.message || 'Sign out failed');
-      return { error };
+      const errorMessage = error.message || 'Sign out failed';
+      setError(errorMessage);
+      return { error: { message: errorMessage } };
     }
   };
 
@@ -199,8 +214,9 @@ export const useAuth = () => {
       setProfile(data);
       return { data, error: null };
     } catch (error: any) {
-      setError(error.message || 'Profile update failed');
-      return { data: null, error };
+      const errorMessage = error.message || 'Profile update failed';
+      setError(errorMessage);
+      return { data: null, error: { message: errorMessage } };
     }
   };
 
