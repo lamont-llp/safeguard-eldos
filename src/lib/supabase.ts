@@ -496,25 +496,23 @@ export const updateRouteSafetyMetrics = async () => {
   return { data, error };
 };
 
-// Real-time subscriptions
-export const subscribeToIncidents = (callback: (payload: any) => void) => {
+// Real-time subscriptions - Return channels before subscribing
+export const createIncidentsChannel = (callback: (payload: any) => void) => {
   return supabase
     .channel('incidents')
     .on('postgres_changes', 
       { event: '*', schema: 'public', table: 'incidents' }, 
       callback
-    )
-    .subscribe();
+    );
 };
 
-export const subscribeToSafetyAlerts = (callback: (payload: any) => void) => {
+export const createSafetyAlertsChannel = (callback: (payload: any) => void) => {
   return supabase
     .channel('safety_alerts')
     .on('postgres_changes', 
       { event: 'INSERT', schema: 'public', table: 'incidents', filter: 'is_urgent=eq.true' }, 
       callback
-    )
-    .subscribe();
+    );
 };
 
 // Utility functions

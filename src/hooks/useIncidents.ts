@@ -6,8 +6,8 @@ import {
   getIncidentsNearLocation,
   createIncident,
   verifyIncident,
-  subscribeToIncidents,
-  subscribeToSafetyAlerts,
+  createIncidentsChannel,
+  createSafetyAlertsChannel,
   formatTimeAgo
 } from '../lib/supabase';
 import { useAuthContext } from '../contexts/AuthContext';
@@ -21,8 +21,8 @@ export const useIncidents = () => {
   useEffect(() => {
     loadIncidents();
     
-    // Subscribe to real-time incident updates
-    const incidentSubscription = subscribeToIncidents((payload) => {
+    // Create channels and subscribe to real-time incident updates
+    const incidentChannel = createIncidentsChannel((payload) => {
       if (payload.eventType === 'INSERT') {
         setIncidents(prev => [payload.new, ...prev]);
       } else if (payload.eventType === 'UPDATE') {
@@ -39,7 +39,7 @@ export const useIncidents = () => {
     });
 
     // Subscribe to safety alerts
-    const alertSubscription = subscribeToSafetyAlerts((payload) => {
+    const alertChannel = createSafetyAlertsChannel((payload) => {
       if (payload.eventType === 'INSERT' && payload.new.is_urgent) {
         // Show urgent notification
         if ('Notification' in window && Notification.permission === 'granted') {
@@ -51,6 +51,10 @@ export const useIncidents = () => {
         }
       }
     });
+
+    // Subscribe to the channels
+    const incidentSubscription = incidentChannel.subscribe();
+    const alertSubscription = alertChannel.subscribe();
 
     return () => {
       incidentSubscription.unsubscribe();
