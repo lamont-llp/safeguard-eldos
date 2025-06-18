@@ -25,12 +25,29 @@ interface IncidentCardProps {
 
 const IncidentCard: React.FC<IncidentCardProps> = ({ incident }) => {
   // Defensive check to prevent rendering with null/undefined incident
-  if (!incident) {
+  if (!incident || !incident.id) {
+    console.warn('IncidentCard received invalid incident:', incident);
     return null;
   }
 
-  const { isAuthenticated } = useAuthContext();
-  const { verifyIncidentReport } = useIncidents();
+  // Initialize hooks with defensive checks
+  let isAuthenticated = false;
+  let verifyIncidentReport: any = null;
+
+  try {
+    const authContext = useAuthContext();
+    isAuthenticated = authContext?.isAuthenticated || false;
+  } catch (error) {
+    console.error('Failed to get auth context:', error);
+  }
+
+  try {
+    const incidentsHook = useIncidents();
+    verifyIncidentReport = incidentsHook?.verifyIncidentReport;
+  } catch (error) {
+    console.error('Failed to get incidents hook:', error);
+  }
+
   const [isVerifying, setIsVerifying] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
   const [verificationNotes, setVerificationNotes] = useState('');
@@ -103,7 +120,10 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident }) => {
   };
 
   const handleVerification = async (type: 'confirm' | 'dispute') => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || !verifyIncidentReport) {
+      console.warn('Cannot verify: not authenticated or verification function not available');
+      return;
+    }
     
     setIsVerifying(true);
     try {
@@ -117,14 +137,35 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident }) => {
     }
   };
 
-  const timeAgo = formatTimeAgo(incident.created_at);
+  // Defensive time formatting
+  let timeAgo = 'Unknown time';
+  try {
+    if (incident.created_at) {
+      timeAgo = formatTimeAgo(incident.created_at);
+    }
+  } catch (error) {
+    console.error('Failed to format time:', error);
+  }
+
+  // Ensure required fields have fallbacks
+  const safeIncident = {
+    title: incident.title || 'Untitled Incident',
+    incident_type: incident.incident_type || 'other',
+    severity: incident.severity || 'low',
+    location_address: incident.location_address || 'Unknown location',
+    verification_count: incident.verification_count || 0,
+    is_verified: incident.is_verified || false,
+    is_urgent: incident.is_urgent || false,
+    is_resolved: incident.is_resolved || false,
+    ...incident
+  };
 
   return (
     <div className={`bg-white rounded-xl shadow-sm border transition-all hover:shadow-md ${
-      incident.is_urgent ? 'border-red-300 bg-red-50' : 'border-gray-200'
+      safeIncident.is_urgent ? 'border-red-300 bg-red-50' : 'border-gray-200'
     }`}>
       {/* Urgent Banner */}
-      {incident.is_urgent && (
+      {safeIncident.is_urgent && (
         <div className="bg-red-600 text-white px-4 py-2 rounded-t-xl flex items-center space-x-2">
           <AlertTriangle className="w-4 h-4" />
           <span className="text-sm font-medium">URGENT ALERT</span>
@@ -133,25 +174,25 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident }) => {
 
       <div className="p-4">
         <div className="flex items-start space-x-3">
-          <div className="text-2xl">{getTypeEmoji(incident.incident_type)}</div>
+          <div className="text-2xl">{getTypeEmoji(safeIncident.incident_type)}</div>
           
           <div className="flex-1 min-w-0">
             <div className="flex items-start justify-between mb-2">
               <div className="flex-1">
                 <h3 className="font-semibold text-gray-900 truncate">
-                  {incident.title}
+                  {safeIncident.title}
                 </h3>
-                <p className="text-sm text-gray-600">{getTypeLabel(incident.incident_type)}</p>
+                <p className="text-sm text-gray-600">{getTypeLabel(safeIncident.incident_type)}</p>
               </div>
               
               <div className="flex items-center space-x-2 ml-2">
-                {incident.is_verified && (
+                {safeIncident.is_verified && (
                   <div className="flex items-center space-x-1 text-blue-600">
                     <Shield className="w-4 h-4" />
                     <span className="text-xs font-medium">Verified</span>
                   </div>
                 )}
-                {incident.is_resolved && (
+                {safeIncident.is_resolved && (
                   <div className="flex items-center space-x-1 text-green-600">
                     <CheckCircle className="w-4 h-4" />
                     <span className="text-xs font-medium">Resolved</span>
@@ -163,12 +204,12 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident }) => {
             <div className="space-y-2">
               <div className="flex items-center space-x-2 text-sm text-gray-600">
                 <MapPin className="w-4 h-4" />
-                <span className="truncate">{incident.location_address}</span>
+                <span className="truncate">{safeIncident.location_address}</span>
               </div>
               
-              {incident.location_area && (
+              {safeIncident.location_area && (
                 <div className="text-sm text-gray-500">
-                  Area: {incident.location_area}
+                  Area: {safeIncident.location_area}
                 </div>
               )}
               
@@ -178,16 +219,16 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident }) => {
                   <span>{timeAgo}</span>
                 </div>
                 
-                <div className={`inline-flex items-center space-x-1 px-2 py-1 rounded-full text-xs font-medium border ${getSeverityColor(incident.severity)}`}>
-                  {getSeverityIcon(incident.severity)}
-                  <span className="capitalize">{incident.severity}</span>
+                <div className={`inline-flex items-center space-x-1 px-2 py-1 rounded-full text-xs font-medium border ${getSeverityColor(safeIncident.severity)}`}>
+                  {getSeverityIcon(safeIncident.severity)}
+                  <span className="capitalize">{safeIncident.severity}</span>
                 </div>
               </div>
 
               {/* Description */}
-              {incident.description && (
+              {safeIncident.description && (
                 <div className="mt-3 p-3 bg-gray-50 rounded-lg">
-                  <p className="text-sm text-gray-700">{incident.description}</p>
+                  <p className="text-sm text-gray-700">{safeIncident.description}</p>
                 </div>
               )}
 
@@ -196,11 +237,11 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident }) => {
                 <div className="flex items-center space-x-2">
                   <Users className="w-4 h-4 text-gray-400" />
                   <span className="text-sm text-gray-600">
-                    {incident.verification_count} verification{incident.verification_count !== 1 ? 's' : ''}
+                    {safeIncident.verification_count} verification{safeIncident.verification_count !== 1 ? 's' : ''}
                   </span>
                 </div>
 
-                {isAuthenticated && !incident.is_resolved && (
+                {isAuthenticated && !safeIncident.is_resolved && (
                   <button
                     onClick={() => setShowDetails(!showDetails)}
                     className="text-blue-600 text-sm font-medium hover:text-blue-800 transition-colors"
@@ -211,7 +252,7 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident }) => {
               </div>
 
               {/* Verification Actions */}
-              {showDetails && isAuthenticated && (
+              {showDetails && isAuthenticated && verifyIncidentReport && (
                 <div className="mt-3 p-4 bg-blue-50 rounded-lg border border-blue-200">
                   <h4 className="font-medium text-blue-900 mb-3">Help verify this incident</h4>
                   
