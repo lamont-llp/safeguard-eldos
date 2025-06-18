@@ -10,13 +10,13 @@ import {
   subscribeToSafetyAlerts,
   formatTimeAgo
 } from '../lib/supabase';
-import { useAuth } from './useAuth';
+import { useAuthContext } from '../contexts/AuthContext';
 
 export const useIncidents = () => {
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const { profile } = useAuth();
+  const { profile } = useAuthContext();
 
   useEffect(() => {
     loadIncidents();
@@ -61,6 +61,7 @@ export const useIncidents = () => {
   const loadIncidents = async () => {
     try {
       setLoading(true);
+      setError(null);
       const { data, error } = await getIncidents(50);
       
       if (error) throw error;
@@ -80,6 +81,7 @@ export const useIncidents = () => {
   ) => {
     try {
       setLoading(true);
+      setError(null);
       const { data, error } = await getIncidentsNearLocation(
         latitude, 
         longitude, 
@@ -197,6 +199,36 @@ export const useIncidents = () => {
     }));
   };
 
+  const getIncidentStats = () => {
+    const total = incidents.length;
+    const resolved = incidents.filter(i => i.is_resolved).length;
+    const urgent = incidents.filter(i => i.is_urgent).length;
+    const verified = incidents.filter(i => i.is_verified).length;
+    const recent = getRecentIncidents(24).length;
+    
+    const byType = incidents.reduce((acc, incident) => {
+      acc[incident.incident_type] = (acc[incident.incident_type] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+    
+    const bySeverity = incidents.reduce((acc, incident) => {
+      acc[incident.severity] = (acc[incident.severity] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    return {
+      total,
+      resolved,
+      urgent,
+      verified,
+      recent,
+      byType,
+      bySeverity,
+      resolutionRate: total > 0 ? (resolved / total) * 100 : 0,
+      verificationRate: total > 0 ? (verified / total) * 100 : 0
+    };
+  };
+
   const requestNotificationPermission = async () => {
     if ('Notification' in window && Notification.permission === 'default') {
       const permission = await Notification.requestPermission();
@@ -217,6 +249,7 @@ export const useIncidents = () => {
     getIncidentsBySeverity,
     getRecentIncidents,
     getIncidentsWithTimeAgo,
+    getIncidentStats,
     requestNotificationPermission,
     refresh: loadIncidents
   };

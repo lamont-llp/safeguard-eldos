@@ -54,6 +54,7 @@ export interface Incident {
   blockchain_hash?: string;
   created_at: string;
   updated_at: string;
+  distance_meters?: number; // Added for spatial queries
 }
 
 export interface SafeRoute {
@@ -77,6 +78,8 @@ export interface SafeRoute {
   time_restrictions?: string;
   created_at: string;
   updated_at: string;
+  distance_to_start?: number; // Added for spatial queries
+  distance_to_end?: number; // Added for spatial queries
 }
 
 export interface CommunityGroup {
@@ -94,6 +97,7 @@ export interface CommunityGroup {
   group_type: 'neighborhood_watch' | 'school_safety' | 'business_district' | 'youth_group' | 'other';
   created_at: string;
   updated_at: string;
+  distance_meters?: number; // Added for spatial queries
 }
 
 export interface CommunityEvent {
@@ -128,6 +132,26 @@ export interface EmergencyContact {
   is_verified: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface SafetyHeatmapPoint {
+  lat: number;
+  lng: number;
+  incident_count: number;
+  severity_score: number;
+}
+
+export interface OptimalRoute {
+  route_id: string;
+  route_name: string;
+  total_distance: number;
+  safety_score: number;
+  estimated_duration: number;
+  waypoints: {
+    start_connection: number;
+    route_distance: number;
+    end_connection: number;
+  };
 }
 
 // Auth helper functions
@@ -189,7 +213,7 @@ export const updateProfile = async (userId: string, updates: Partial<Profile>) =
   return { data, error };
 };
 
-// Incident helper functions
+// Incident helper functions with PostGIS
 export const createIncident = async (incidentData: Partial<Incident>) => {
   const { data, error } = await supabase
     .from('incidents')
@@ -214,13 +238,12 @@ export const getIncidentsNearLocation = async (
   radiusMeters = 5000,
   limit = 50
 ) => {
-  // For now, we'll use a simple query. In production, you'd use PostGIS functions
-  const { data, error } = await supabase
-    .from('incidents')
-    .select('*')
-    .order('created_at', { ascending: false })
-    .limit(limit);
-  
+  const { data, error } = await supabase.rpc('get_incidents_near_location', {
+    lat: latitude,
+    lng: longitude,
+    radius_meters: radiusMeters,
+    result_limit: limit
+  });
   return { data, error };
 };
 
@@ -255,13 +278,62 @@ export const verifyIncident = async (
   return { data, error };
 };
 
-// Safe routes helper functions
+// Safe routes helper functions with PostGIS
 export const getSafeRoutes = async () => {
   const { data, error } = await supabase
     .from('safe_routes')
     .select('*')
     .eq('is_active', true)
     .order('safety_score', { ascending: false });
+  return { data, error };
+};
+
+export const getSafeRoutesNearLocation = async (
+  latitude: number,
+  longitude: number,
+  radiusMeters = 10000,
+  limit = 20
+) => {
+  const { data, error } = await supabase.rpc('get_safe_routes_near_location', {
+    lat: latitude,
+    lng: longitude,
+    radius_meters: radiusMeters,
+    result_limit: limit
+  });
+  return { data, error };
+};
+
+export const findOptimalSafeRoute = async (
+  startLat: number,
+  startLng: number,
+  endLat: number,
+  endLng: number,
+  maxDetourMeters = 2000
+): Promise<{ data: OptimalRoute[] | null; error: any }> => {
+  const { data, error } = await supabase.rpc('find_optimal_safe_route', {
+    start_lat: startLat,
+    start_lng: startLng,
+    end_lat: endLat,
+    end_lng: endLng,
+    max_detour_meters: maxDetourMeters
+  });
+  return { data, error };
+};
+
+export const calculateRouteSafetyScore = async (
+  startLat: number,
+  startLng: number,
+  endLat: number,
+  endLng: number,
+  bufferMeters = 500
+) => {
+  const { data, error } = await supabase.rpc('calculate_route_safety_score', {
+    route_start_lat: startLat,
+    route_start_lng: startLng,
+    route_end_lat: endLat,
+    route_end_lng: endLng,
+    buffer_meters: bufferMeters
+  });
   return { data, error };
 };
 
@@ -305,13 +377,26 @@ export const rateSafeRoute = async (routeId: string, ratings: {
   return { data, error };
 };
 
-// Community groups helper functions
+// Community groups helper functions with PostGIS
 export const getCommunityGroups = async () => {
   const { data, error } = await supabase
     .from('community_groups')
     .select('*')
     .eq('is_active', true)
     .order('member_count', { ascending: false });
+  return { data, error };
+};
+
+export const getCommunityGroupsForLocation = async (
+  latitude: number,
+  longitude: number,
+  radiusMeters = 5000
+) => {
+  const { data, error } = await supabase.rpc('get_community_groups_for_location', {
+    lat: latitude,
+    lng: longitude,
+    radius_meters: radiusMeters
+  });
   return { data, error };
 };
 
@@ -390,6 +475,27 @@ export const getEmergencyContacts = async () => {
   return { data, error };
 };
 
+// Safety analytics with PostGIS
+export const getSafetyHeatmap = async (
+  centerLat: number,
+  centerLng: number,
+  radiusMeters = 5000,
+  gridSize = 50
+): Promise<{ data: SafetyHeatmapPoint[] | null; error: any }> => {
+  const { data, error } = await supabase.rpc('get_safety_heatmap', {
+    center_lat: centerLat,
+    center_lng: centerLng,
+    radius_meters: radiusMeters,
+    grid_size: gridSize
+  });
+  return { data, error };
+};
+
+export const updateRouteSafetyMetrics = async () => {
+  const { data, error } = await supabase.rpc('update_route_safety_metrics');
+  return { data, error };
+};
+
 // Real-time subscriptions
 export const subscribeToIncidents = (callback: (payload: any) => void) => {
   return supabase
@@ -436,4 +542,22 @@ export const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 
   return R * c; // Distance in meters
+};
+
+// Format distance for display
+export const formatDistance = (meters: number): string => {
+  if (meters < 1000) {
+    return `${Math.round(meters)}m`;
+  } else {
+    return `${(meters / 1000).toFixed(1)}km`;
+  }
+};
+
+// Format safety score for display
+export const formatSafetyScore = (score: number): { label: string; color: string } => {
+  if (score >= 90) return { label: 'Very Safe', color: 'text-green-600' };
+  if (score >= 75) return { label: 'Safe', color: 'text-green-500' };
+  if (score >= 60) return { label: 'Moderate', color: 'text-yellow-500' };
+  if (score >= 40) return { label: 'Caution', color: 'text-orange-500' };
+  return { label: 'High Risk', color: 'text-red-600' };
 };
