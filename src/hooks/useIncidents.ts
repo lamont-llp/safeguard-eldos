@@ -23,15 +23,15 @@ export const useIncidents = () => {
     
     // Create channels and subscribe to real-time incident updates
     const incidentChannel = createIncidentsChannel((payload) => {
-      if (payload.eventType === 'INSERT') {
+      if (payload.eventType === 'INSERT' && payload.new) {
         setIncidents(prev => [payload.new, ...prev]);
-      } else if (payload.eventType === 'UPDATE') {
+      } else if (payload.eventType === 'UPDATE' && payload.new) {
         setIncidents(prev => 
           prev.map(incident => 
             incident.id === payload.new.id ? payload.new : incident
           )
         );
-      } else if (payload.eventType === 'DELETE') {
+      } else if (payload.eventType === 'DELETE' && payload.old) {
         setIncidents(prev => 
           prev.filter(incident => incident.id !== payload.old.id)
         );
@@ -40,7 +40,7 @@ export const useIncidents = () => {
 
     // Subscribe to safety alerts
     const alertChannel = createSafetyAlertsChannel((payload) => {
-      if (payload.eventType === 'INSERT' && payload.new.is_urgent) {
+      if (payload.eventType === 'INSERT' && payload.new && payload.new.is_urgent) {
         // Show urgent notification
         if ('Notification' in window && Notification.permission === 'granted') {
           new Notification('SafeGuard Eldos - Urgent Alert', {
