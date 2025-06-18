@@ -24,6 +24,11 @@ interface IncidentCardProps {
 }
 
 const IncidentCard: React.FC<IncidentCardProps> = ({ incident }) => {
+  // Defensive check to prevent rendering with null/undefined incident
+  if (!incident) {
+    return null;
+  }
+
   const { isAuthenticated } = useAuthContext();
   const { verifyIncidentReport } = useIncidents();
   const [isVerifying, setIsVerifying] = useState(false);
