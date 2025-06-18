@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase, getCurrentUser, getProfile, createProfile, Profile } from '../lib/supabase';
 
@@ -7,81 +7,24 @@ export const useAuth = () => {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
-  const [initializing, setInitializing] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  
+  // Track if we're currently creating a profile to prevent race conditions
+  const [creatingProfile, setCreatingProfile] = useState(false);
 
-  useEffect(() => {
-    let mounted = true;
-
-    // Get initial session
-    const getInitialSession = async () => {
-      try {
-        const { data: { session }, error } = await supabase.auth.getSession();
-        
-        if (!mounted) return;
-        
-        if (error) {
-          console.error('Error getting session:', error);
-          setLoading(false);
-          setInitializing(false);
-          return;
-        }
-
-        setSession(session);
-        setUser(session?.user ?? null);
-        
-        if (session?.user) {
-          await loadUserProfile(session.user.id);
-        }
-        
-      } catch (error) {
-        console.error('Error in getInitialSession:', error);
-      } finally {
-        if (mounted) {
-          setLoading(false);
-          setInitializing(false);
-        }
-      }
-    };
-
-    getInitialSession();
-
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        if (!mounted) return;
-        
-        console.log('Auth state changed:', event, session?.user?.id);
-        
-        setSession(session);
-        setUser(session?.user ?? null);
-        
-        if (session?.user) {
-          await loadUserProfile(session.user.id);
-        } else {
-          setProfile(null);
-        }
-        
-        // Only set loading to false after initial auth state is determined
-        if (initializing) {
-          setLoading(false);
-          setInitializing(false);
-        }
-      }
-    );
-
-    return () => {
-      mounted = false;
-      subscription.unsubscribe();
-    };
-  }, []); // Remove initializing from dependencies to prevent infinite loop
-
-  const loadUserProfile = async (userId: string) => {
+  const loadUserProfile = useCallback(async (userId: string, mounted: { current: boolean }) => {
+    if (!mounted.current) return;
+    
     try {
       const { data: existingProfile, error } = await getProfile(userId);
       
-      if (!existingProfile && !error) {
+      if (!mounted.current) return;
+      
+      if (!existingProfile && !error && !creatingProfile) {
         // Profile doesn't exist, create one
         console.log('Creating new profile for user:', userId);
+        setCreatingProfile(true);
+        
         const { data: newProfile, error: createError } = await createProfile({
           user_id: userId,
           reputation_score: 0,
@@ -90,8 +33,13 @@ export const useAuth = () => {
           language_preference: 'en'
         });
         
+        if (!mounted.current) return;
+        
+        setCreatingProfile(false);
+        
         if (createError) {
           console.error('Error creating profile:', createError);
+          setError('Failed to create user profile');
         } else {
           console.log('Profile created successfully:', newProfile);
           setProfile(newProfile);
@@ -101,14 +49,91 @@ export const useAuth = () => {
         setProfile(existingProfile);
       } else if (error) {
         console.error('Error loading profile:', error);
+        setError('Failed to load user profile');
       }
     } catch (error) {
       console.error('Error in loadUserProfile:', error);
+      if (mounted.current) {
+        setError('Failed to load user profile');
+        setCreatingProfile(false);
+      }
     }
-  };
+  }, [creatingProfile]);
+
+  useEffect(() => {
+    const mounted = { current: true };
+
+    // Get initial session
+    const getInitialSession = async () => {
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        
+        if (!mounted.current) return;
+        
+        if (error) {
+          console.error('Error getting session:', error);
+          setError('Failed to get session');
+          setLoading(false);
+          return;
+        }
+
+        setSession(session);
+        setUser(session?.user ?? null);
+        
+        if (session?.user) {
+          await loadUserProfile(session.user.id, mounted);
+        }
+        
+      } catch (error) {
+        console.error('Error in getInitialSession:', error);
+        if (mounted.current) {
+          setError('Failed to initialize authentication');
+        }
+      } finally {
+        if (mounted.current) {
+          setLoading(false);
+        }
+      }
+    };
+
+    getInitialSession();
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        if (!mounted.current) return;
+        
+        console.log('Auth state changed:', event, session?.user?.id);
+        
+        // Clear any previous errors
+        setError(null);
+        
+        setSession(session);
+        setUser(session?.user ?? null);
+        
+        if (session?.user) {
+          await loadUserProfile(session.user.id, mounted);
+        } else {
+          setProfile(null);
+          setCreatingProfile(false);
+        }
+        
+        // Set loading to false after handling auth state change
+        if (mounted.current) {
+          setLoading(false);
+        }
+      }
+    );
+
+    return () => {
+      mounted.current = false;
+      subscription.unsubscribe();
+    };
+  }, [loadUserProfile]);
 
   const signUp = async (email: string, password: string) => {
     try {
+      setError(null);
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
@@ -121,12 +146,14 @@ export const useAuth = () => {
       
       return { data, error: null };
     } catch (error: any) {
+      setError(error.message || 'Sign up failed');
       return { data: null, error };
     }
   };
 
   const signIn = async (email: string, password: string) => {
     try {
+      setError(null);
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password
@@ -136,21 +163,26 @@ export const useAuth = () => {
       
       return { data, error: null };
     } catch (error: any) {
+      setError(error.message || 'Sign in failed');
       return { data: null, error };
     }
   };
 
   const signOut = async () => {
     try {
+      setError(null);
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
       
+      // Clear state immediately
       setUser(null);
       setProfile(null);
       setSession(null);
+      setCreatingProfile(false);
       
       return { error: null };
     } catch (error: any) {
+      setError(error.message || 'Sign out failed');
       return { error };
     }
   };
@@ -159,6 +191,7 @@ export const useAuth = () => {
     if (!user) return { data: null, error: new Error('No user logged in') };
     
     try {
+      setError(null);
       const { data, error } = await supabase
         .from('profiles')
         .update(updates)
@@ -171,6 +204,7 @@ export const useAuth = () => {
       setProfile(data);
       return { data, error: null };
     } catch (error: any) {
+      setError(error.message || 'Profile update failed');
       return { data: null, error };
     }
   };
@@ -180,6 +214,7 @@ export const useAuth = () => {
     profile,
     session,
     loading,
+    error,
     signUp,
     signIn,
     signOut,
