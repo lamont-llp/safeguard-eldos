@@ -30,23 +30,13 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident }) => {
     return null;
   }
 
-  // Initialize hooks with defensive checks
-  let isAuthenticated = false;
-  let verifyIncidentReport: any = null;
-
-  try {
-    const authContext = useAuthContext();
-    isAuthenticated = authContext?.isAuthenticated || false;
-  } catch (error) {
-    console.error('Failed to get auth context:', error);
-  }
-
-  try {
-    const incidentsHook = useIncidents();
-    verifyIncidentReport = incidentsHook?.verifyIncidentReport;
-  } catch (error) {
-    console.error('Failed to get incidents hook:', error);
-  }
+  // Call hooks unconditionally at the top level
+  const authContext = useAuthContext();
+  const incidentsHook = useIncidents();
+  
+  // Extract values with defensive checks
+  const isAuthenticated = authContext?.isAuthenticated || false;
+  const verifyIncidentReport = incidentsHook?.verifyIncidentReport;
 
   const [isVerifying, setIsVerifying] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
