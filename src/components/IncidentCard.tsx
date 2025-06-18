@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { MapPin, Clock, CheckCircle, AlertTriangle, Users, ThumbsUp, ThumbsDown, MessageSquare, Shield } from 'lucide-react';
-import { useAuth } from '../hooks/useAuth';
+import { useAuthContext } from '../contexts/AuthContext';
 import { useIncidents } from '../hooks/useIncidents';
 import { formatTimeAgo } from '../lib/supabase';
 
@@ -24,7 +24,7 @@ interface IncidentCardProps {
 }
 
 const IncidentCard: React.FC<IncidentCardProps> = ({ incident }) => {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated } = useAuthContext();
   const { verifyIncidentReport } = useIncidents();
   const [isVerifying, setIsVerifying] = useState(false);
   const [showDetails, setShowDetails] = useState(false);

@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import { useAuth } from './hooks/useAuth';
+import { AuthProvider } from './contexts/AuthContext';
+import { useAuthContext } from './contexts/AuthContext';
 import Dashboard from './pages/Dashboard';
 import ReportIncident from './pages/ReportIncident';
 import SafeRoutes from './pages/SafeRoutes';
@@ -9,8 +10,9 @@ import Navigation from './components/Navigation';
 import AuthModal from './components/AuthModal';
 import LoadingSpinner from './components/LoadingSpinner';
 
-function App() {
-  const { loading } = useAuth();
+// Separate component to use the auth context
+const AppContent = () => {
+  const { loading } = useAuthContext();
 
   if (loading) {
     return <LoadingSpinner />;
@@ -31,6 +33,14 @@ function App() {
         </div>
       </div>
     </Router>
+  );
+};
+
+function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   );
 }
 

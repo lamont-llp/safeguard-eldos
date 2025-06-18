@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Shield, AlertTriangle, CheckCircle, Clock, MapPin, Users, TrendingUp, Bell, RefreshCw } from 'lucide-react';
-import { useAuth } from '../hooks/useAuth';
+import { useAuthContext } from '../contexts/AuthContext';
 import { useIncidents } from '../hooks/useIncidents';
 import { useAuthModal } from '../components/AuthModal';
 import EmergencyButton from '../components/EmergencyButton';
@@ -8,7 +8,7 @@ import IncidentCard from '../components/IncidentCard';
 import SafetyStatus from '../components/SafetyStatus';
 
 const Dashboard = () => {
-  const { isAuthenticated, profile } = useAuth();
+  const { isAuthenticated, profile } = useAuthContext();
   const { 
     incidents, 
     loading, 

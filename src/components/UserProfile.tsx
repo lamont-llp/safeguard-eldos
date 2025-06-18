@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { User, Shield, Settings, LogOut, Edit3, Save, X, Star, Award } from 'lucide-react';
-import { useAuth } from '../hooks/useAuth';
+import { useAuthContext } from '../contexts/AuthContext';
 
 interface UserProfileProps {
   isOpen: boolean;
@@ -8,7 +8,7 @@ interface UserProfileProps {
 }
 
 const UserProfile: React.FC<UserProfileProps> = ({ isOpen, onClose }) => {
-  const { user, profile, signOut, updateUserProfile, isAuthenticated } = useAuth();
+  const { user, profile, signOut, updateUserProfile, isAuthenticated } = useAuthContext();
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState({
     area_of_interest: profile?.area_of_interest || '',

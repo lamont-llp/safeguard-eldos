@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Home, Shield, Route, Users, User } from 'lucide-react';
-import { useAuth } from '../hooks/useAuth';
+import { useAuthContext } from '../contexts/AuthContext';
 import { useAuthModal } from './AuthModal';
 import UserProfile from './UserProfile';
 
 const Navigation = () => {
   const location = useLocation();
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated } = useAuthContext();
   const { openSignIn, AuthModal } = useAuthModal();
   const [showProfile, setShowProfile] = useState(false);
 

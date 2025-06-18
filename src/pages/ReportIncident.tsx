@@ -1,14 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Camera, Mic, MapPin, Shield, AlertCircle, Clock, Phone, Send, Loader2, CheckCircle } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useAuth } from '../hooks/useAuth';
+import { useAuthContext } from '../contexts/AuthContext';
 import { useIncidents } from '../hooks/useIncidents';
 import { useLocation } from '../hooks/useLocation';
 import { useAuthModal } from '../components/AuthModal';
 
 const ReportIncident = () => {
   const navigate = useNavigate();
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated } = useAuthContext();
   const { reportIncident } = useIncidents();
   const { latitude, longitude, getLocationString, getCurrentLocation } = useLocation();
   const { openSignIn, AuthModal } = useAuthModal();
