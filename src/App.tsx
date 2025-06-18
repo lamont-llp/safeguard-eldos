@@ -1,7 +1,8 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import { AuthProvider } from './contexts/AuthContext';
-import { useAuthContext } from './contexts/AuthContext';
+import { useAuth } from './hooks/useAuth';
+import { IncidentsProvider } from './contexts/IncidentsContext';
+import { useIncidentsRealtime } from './hooks/useIncidentsRealtime';
 import Dashboard from './pages/Dashboard';
 import ReportIncident from './pages/ReportIncident';
 import SafeRoutes from './pages/SafeRoutes';
@@ -10,9 +11,11 @@ import Navigation from './components/Navigation';
 import AuthModal from './components/AuthModal';
 import LoadingSpinner from './components/LoadingSpinner';
 
-// Separate component to use the auth context
 const AppContent = () => {
-  const { loading } = useAuthContext();
+  const { loading } = useAuth();
+  
+  // Initialize real-time subscriptions once at the app level
+  useIncidentsRealtime();
 
   if (loading) {
     return <LoadingSpinner />;
@@ -38,9 +41,9 @@ const AppContent = () => {
 
 function App() {
   return (
-    <AuthProvider>
+    <IncidentsProvider>
       <AppContent />
-    </AuthProvider>
+    </IncidentsProvider>
   );
 }
 
