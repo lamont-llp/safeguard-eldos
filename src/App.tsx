@@ -1,9 +1,11 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { useAuth } from './hooks/useAuth';
 import { IncidentsProvider } from './contexts/IncidentsContext';
-import { AuthProvider } from './contexts/AuthContext'
+import { AuthProvider } from './contexts/AuthContext';
 import { useIncidentsRealtime } from './hooks/useIncidentsRealtime';
+import { useNotifications } from './hooks/useNotifications';
+import { useLocation } from './hooks/useLocation';
 import Dashboard from './pages/Dashboard';
 import ReportIncident from './pages/ReportIncident';
 import SafeRoutes from './pages/SafeRoutes';
@@ -14,9 +16,38 @@ import LoadingSpinner from './components/LoadingSpinner';
 
 const AppContent = () => {
   const { loading } = useAuth();
+  const { latitude, longitude } = useLocation();
+  const { requestPermission } = useNotifications();
   
   // Initialize real-time subscriptions once at the app level
   useIncidentsRealtime();
+
+  useEffect(() => {
+    // Initialize notifications when app loads
+    const initializeNotifications = async () => {
+      if ('Notification' in window && Notification.permission === 'default') {
+        // Don't auto-request permission, let user decide
+        console.log('Notifications available but not requested yet');
+      }
+    };
+
+    initializeNotifications();
+  }, []);
+
+  useEffect(() => {
+    // Register service worker for PWA functionality
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js')
+          .then((registration) => {
+            console.log('SW registered: ', registration);
+          })
+          .catch((registrationError) => {
+            console.log('SW registration failed: ', registrationError);
+          });
+      });
+    }
+  }, []);
 
   if (loading) {
     return <LoadingSpinner />;

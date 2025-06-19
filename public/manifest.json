@@ -1,0 +1,55 @@
+{
+  "name": "SafeGuard Eldos",
+  "short_name": "SafeGuard",
+  "description": "Community safety platform for Eldorado Park residents",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#DC2626",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/shield.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/shield.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["safety", "social", "utilities"],
+  "lang": "en",
+  "dir": "ltr",
+  "scope": "/",
+  "prefer_related_applications": false,
+  "shortcuts": [
+    {
+      "name": "Report Incident",
+      "short_name": "Report",
+      "description": "Quickly report a safety incident",
+      "url": "/report",
+      "icons": [
+        {
+          "src": "/shield.svg",
+          "sizes": "96x96"
+        }
+      ]
+    },
+    {
+      "name": "Emergency",
+      "short_name": "Emergency",
+      "description": "Emergency contact and alerts",
+      "url": "/?emergency=true",
+      "icons": [
+        {
+          "src": "/shield.svg",
+          "sizes": "96x96"
+        }
+      ]
+    }
+  ]
+}
