@@ -85,7 +85,10 @@ export const useIncidents = () => {
         location_area: incidentData.location_area,
         location_point: `POINT(${incidentData.longitude} ${incidentData.latitude})`,
         is_urgent: incidentData.is_urgent || false,
-        media_urls: incidentData.media_urls || []
+        media_urls: incidentData.media_urls || [],
+        // Add latitude and longitude for real-time notifications
+        latitude: incidentData.latitude,
+        longitude: incidentData.longitude
       });
 
       if (error) throw error;
@@ -115,18 +118,30 @@ export const useIncidents = () => {
       
       if (error) throw error;
 
-      // Update local incident verification count
-      const updatedIncident = incidents.find(incident => incident.id === incidentId);
-      if (updatedIncident) {
-        const newIncident = {
-          ...updatedIncident,
-          verification_count: updatedIncident.verification_count + (verificationType === 'confirm' ? 1 : 0),
-          is_verified: updatedIncident.verification_count + 1 >= 3 // Verify after 3 confirmations
-        };
-        dispatch({ type: 'UPDATE_INCIDENT', payload: newIncident });
-      }
+      // The server-side trigger will automatically update the incident
+      // verification count and status, so we don't need to do it here.
+      // We'll refresh the incidents to get the updated data.
+      await loadIncidents();
 
       return { data, error: null };
+    } catch (err: any) {
+      // Handle specific error cases
+      if (err.message?.includes('already verified')) {
+        return { data: null, error: { message: 'You have already verified this incident' } };
+      }
+      return { data: null, error: err };
+    }
+  };
+
+  const getIncidentVerificationStats = async (incidentId: string) => {
+    try {
+      const { data, error } = await supabase.rpc('get_incident_verification_stats', {
+        incident_uuid: incidentId
+      });
+      
+      if (error) throw error;
+      
+      return { data: data?.[0] || null, error: null };
     } catch (err: any) {
       return { data: null, error: err };
     }
@@ -149,11 +164,37 @@ export const useIncidents = () => {
     );
   };
 
+  const getVerifiedIncidents = () => {
+    return incidents.filter(incident => incident.is_verified);
+  };
+
+  const getUnverifiedIncidents = () => {
+    return incidents.filter(incident => !incident.is_verified && !incident.is_resolved);
+  };
+
   const getIncidentsWithTimeAgo = () => {
     return incidents.map(incident => ({
       ...incident,
       timeAgo: formatTimeAgo(incident.created_at)
     }));
+  };
+
+  const getIncidentStats = () => {
+    const total = incidents.length;
+    const verified = incidents.filter(i => i.is_verified).length;
+    const resolved = incidents.filter(i => i.is_resolved).length;
+    const urgent = incidents.filter(i => i.is_urgent).length;
+    const recent = getRecentIncidents(24).length;
+
+    return {
+      total,
+      verified,
+      resolved,
+      urgent,
+      recent,
+      verificationRate: total > 0 ? (verified / total) * 100 : 0,
+      resolutionRate: total > 0 ? (resolved / total) * 100 : 0
+    };
   };
 
   const requestNotificationPermission = async () => {
@@ -172,10 +213,14 @@ export const useIncidents = () => {
     loadIncidentsNearLocation,
     reportIncident,
     verifyIncidentReport,
+    getIncidentVerificationStats,
     getIncidentsByType,
     getIncidentsBySeverity,
     getRecentIncidents,
+    getVerifiedIncidents,
+    getUnverifiedIncidents,
     getIncidentsWithTimeAgo,
+    getIncidentStats,
     requestNotificationPermission,
     refresh: loadIncidents
   };

@@ -45,6 +45,8 @@ export interface Incident {
   location_point: any; // PostGIS geography type
   location_address: string;
   location_area?: string;
+  latitude?: number; // Added for real-time notifications
+  longitude?: number; // Added for real-time notifications
   is_verified: boolean;
   verification_count: number;
   is_urgent: boolean;
@@ -152,6 +154,17 @@ export interface OptimalRoute {
     route_distance: number;
     end_connection: number;
   };
+}
+
+export interface IncidentVerificationStats {
+  incident_id: string;
+  total_verifications: number;
+  confirm_count: number;
+  dispute_count: number;
+  additional_info_count: number;
+  verification_score: number;
+  is_verified: boolean;
+  verification_percentage: number;
 }
 
 // Auth helper functions
@@ -264,6 +277,7 @@ export const verifyIncident = async (
 
   if (!profile) throw new Error('Profile not found');
 
+  // The server-side trigger will handle updating verification counts
   const { data, error } = await supabase
     .from('incident_verifications')
     .insert([{
@@ -276,6 +290,46 @@ export const verifyIncident = async (
     .single();
   
   return { data, error };
+};
+
+// Get incident verification statistics
+export const getIncidentVerificationStats = async (incidentId: string): Promise<{ data: IncidentVerificationStats | null; error: any }> => {
+  const { data, error } = await supabase.rpc('get_incident_verification_stats', {
+    incident_uuid: incidentId
+  });
+  
+  if (error) return { data: null, error };
+  
+  return { data: data?.[0] || null, error: null };
+};
+
+// Check if user has already verified an incident
+export const hasUserVerifiedIncident = async (incidentId: string): Promise<{ data: boolean; error: any }> => {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { data: false, error: null };
+
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('user_id', user.id)
+      .single();
+
+    if (!profile) return { data: false, error: null };
+
+    const { data, error } = await supabase
+      .from('incident_verifications')
+      .select('id')
+      .eq('incident_id', incidentId)
+      .eq('verifier_id', profile.id)
+      .maybeSingle();
+
+    if (error) return { data: false, error };
+
+    return { data: !!data, error: null };
+  } catch (err) {
+    return { data: false, error: err };
+  }
 };
 
 // Safe routes helper functions with PostGIS
