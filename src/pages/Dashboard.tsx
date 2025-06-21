@@ -113,7 +113,7 @@ const Dashboard = () => {
                   </div>
                 )}
               </div>
-              <span className="text-xs font-medium">
+              <span className="text-xs font-medium text-red-100">
                 {isAuthenticated ? 'Alerts' : 'Sign In'}
               </span>
             </button>
