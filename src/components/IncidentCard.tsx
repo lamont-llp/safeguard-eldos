@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { MapPin, Clock, CheckCircle, AlertTriangle, Users, ThumbsUp, ThumbsDown, MessageSquare, X, Send, Loader2 } from 'lucide-react';
 import { useAuthContext } from '../contexts/AuthContext';
+import { supabase } from '../lib/supabase';
 
 interface Incident {
   id: string;
@@ -25,12 +26,13 @@ interface IncidentCardProps {
 }
 
 const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
-  const { isAuthenticated } = useAuthContext();
+  const { isAuthenticated, profile } = useAuthContext();
   const [showVerificationPanel, setShowVerificationPanel] = useState(false);
   const [selectedVerificationType, setSelectedVerificationType] = useState<'confirm' | 'dispute' | 'additional_info' | null>(null);
   const [verificationNotes, setVerificationNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasVerified, setHasVerified] = useState(false);
+  const [isCheckingVerification, setIsCheckingVerification] = useState(false);
 
   const getSeverityColor = (severity: string) => {
     switch (severity) {
@@ -89,6 +91,40 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
     if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)} hours ago`;
     return `${Math.floor(diffInSeconds / 86400)} days ago`;
   };
+
+  // Check if user has already verified this incident
+  useEffect(() => {
+    const checkUserVerification = async () => {
+      if (!isAuthenticated || !profile) {
+        setHasVerified(false);
+        return;
+      }
+
+      setIsCheckingVerification(true);
+      try {
+        const { data, error } = await supabase
+          .from('incident_verifications')
+          .select('id')
+          .eq('incident_id', incident.id)
+          .eq('verifier_id', profile.id)
+          .maybeSingle();
+
+        if (error) {
+          console.error('Error checking verification status:', error);
+          setHasVerified(false);
+        } else {
+          setHasVerified(!!data);
+        }
+      } catch (error) {
+        console.error('Error checking verification status:', error);
+        setHasVerified(false);
+      } finally {
+        setIsCheckingVerification(false);
+      }
+    };
+
+    checkUserVerification();
+  }, [incident.id, isAuthenticated, profile]);
 
   const handleVerificationSubmit = async () => {
     if (!selectedVerificationType || !onVerify) return;
@@ -212,36 +248,50 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
                 </span>
               </div>
               
-              {/* Quick Verification Buttons */}
-              {isAuthenticated && onVerify && !hasVerified && !incident.is_resolved && (
+              {/* Verification Buttons */}
+              {isAuthenticated && onVerify && !incident.is_resolved && (
                 <div className="flex items-center space-x-2">
-                  <button
-                    onClick={() => handleQuickVerification('confirm')}
-                    disabled={isSubmitting}
-                    className="flex items-center space-x-1 px-3 py-1 bg-green-50 text-green-700 rounded-lg hover:bg-green-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {isSubmitting ? (
+                  {isCheckingVerification ? (
+                    <div className="flex items-center space-x-1 text-gray-500">
                       <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <ThumbsUp className="w-4 h-4" />
-                    )}
-                    <span className="text-xs font-medium">Confirm</span>
-                  </button>
-                  
-                  <button
-                    onClick={() => setShowVerificationPanel(true)}
-                    className="flex items-center space-x-1 px-3 py-1 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors"
-                  >
-                    <MessageSquare className="w-4 h-4" />
-                    <span className="text-xs font-medium">More</span>
-                  </button>
+                      <span className="text-xs">Checking...</span>
+                    </div>
+                  ) : hasVerified ? (
+                    <div className="flex items-center space-x-1 text-green-600">
+                      <CheckCircle className="w-4 h-4" />
+                      <span className="text-xs font-medium">You verified this</span>
+                    </div>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => handleQuickVerification('confirm')}
+                        disabled={isSubmitting}
+                        className="flex items-center space-x-1 px-3 py-1 bg-green-50 text-green-700 rounded-lg hover:bg-green-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {isSubmitting ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <ThumbsUp className="w-4 h-4" />
+                        )}
+                        <span className="text-xs font-medium">Confirm</span>
+                      </button>
+                      
+                      <button
+                        onClick={() => setShowVerificationPanel(true)}
+                        className="flex items-center space-x-1 px-3 py-1 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors"
+                      >
+                        <MessageSquare className="w-4 h-4" />
+                        <span className="text-xs font-medium">More</span>
+                      </button>
+                    </>
+                  )}
                 </div>
               )}
 
-              {hasVerified && (
-                <div className="flex items-center space-x-1 text-green-600">
-                  <CheckCircle className="w-4 h-4" />
-                  <span className="text-xs font-medium">You verified this</span>
+              {/* Authentication Notice */}
+              {!isAuthenticated && (
+                <div className="text-xs text-gray-500">
+                  Sign in to verify
                 </div>
               )}
             </div>
@@ -250,7 +300,7 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
       </div>
 
       {/* Verification Panel */}
-      {showVerificationPanel && (
+      {showVerificationPanel && !hasVerified && (
         <div className="border-t border-gray-200 bg-gray-50 p-4">
           <div className="flex items-center justify-between mb-4">
             <h4 className="font-medium text-gray-900">Verify Incident</h4>
