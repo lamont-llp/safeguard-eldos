@@ -250,6 +250,12 @@ const Dashboard = () => {
 
       {/* Auth Modal */}
       <AuthModal />
+
+      {/* Notification Center */}
+      <NotificationCenter
+        isOpen={showNotifications}
+        onClose={() => setShowNotifications(false)}
+      />
     </div>
   );
 };
