@@ -93,7 +93,7 @@ const Dashboard = () => {
           <div className="flex items-center space-x-3">
             {isAuthenticated && (
               <div className="bg-red-500 bg-opacity-30 p-2 rounded-lg">
-                <Bell className="w-6 h-6 text-red-100">
+                {*/<Bell className="w-6 h-6 text-red-100">*/}
                  {/* Notifications Button */}
           <button
             onClick={handleNotificationClick}
