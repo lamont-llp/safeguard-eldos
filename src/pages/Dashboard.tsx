@@ -117,7 +117,7 @@ const Dashboard = () => {
                 {isAuthenticated ? 'Alerts' : 'Sign In'}
               </span>
             </button>
-                </Bell>
+                {/*</Bell>*/}
               </div>
             )}
             <Shield className="w-10 h-10 text-red-200" />
