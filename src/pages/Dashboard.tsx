@@ -81,7 +81,30 @@ const Dashboard = () => {
           <div className="flex items-center space-x-3">
             {isAuthenticated && (
               <div className="bg-red-500 bg-opacity-30 p-2 rounded-lg">
-                <Bell className="w-6 h-6 text-red-100" />
+                <Bell className="w-6 h-6 text-red-100">
+                 {/* Notifications Button */}
+          <button
+            onClick={handleNotificationClick}
+            className={`flex flex-col items-center py-2 px-3 rounded-lg transition-all duration-200 ${
+              showNotifications
+                ? 'text-blue-600 bg-blue-50'
+                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            <div className="relative">
+              <Bell className="w-6 h-6 mb-1" />
+              {isAuthenticated && unreadCount > 0 && (
+                <div className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center">
+                  <span className="text-white text-xs font-bold">
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                </div>
+              )}
+            </div>
+            <span className="text-xs font-medium">
+              {isAuthenticated ? 'Alerts' : 'Sign In'}
+            </span>
+          </button></Bell>
               </div>
             )}
             <Shield className="w-10 h-10 text-red-200" />
