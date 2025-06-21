@@ -7,7 +7,7 @@ import EmergencyButton from '../components/EmergencyButton';
 import IncidentCard from '../components/IncidentCard';
 import SafetyStatus from '../components/SafetyStatus';
 import { useNotifications } from '../hooks/useNotifications';
-import NotificationCenter from './NotificationCenter';
+import NotificationCenter from '../components/NotificationCenter';
 
 const Dashboard = () => {
   const { isAuthenticated, profile } = useAuth();
