@@ -6,12 +6,16 @@ import { useIncidents } from '../hooks/useIncidents';
 import EmergencyButton from '../components/EmergencyButton';
 import IncidentCard from '../components/IncidentCard';
 import SafetyStatus from '../components/SafetyStatus';
+import { useNotifications } from '../hooks/useNotifications';
+import NotificationCenter from './NotificationCenter';
 
 const Dashboard = () => {
   const { isAuthenticated, profile } = useAuth();
   const { openSignUp, AuthModal } = useAuthModal();
   const { incidents, loading, verifyIncidentReport } = useIncidents();
   const [showWelcome, setShowWelcome] = useState(false);
+  const { unreadCount } = useNotifications();
+  const [showNotifications, setShowNotifications] = useState(false);
 
   const safetyMetrics = {
     activeIncidents: incidents.filter(i => !i.is_resolved).length,
@@ -93,18 +97,19 @@ const Dashboard = () => {
           >
             <div className="relative">
               <Bell className="w-6 h-6 mb-1" />
-              {isAuthenticated && unreadCount > 0 && (
-                <div className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center">
-                  <span className="text-white text-xs font-bold">
-                    {unreadCount > 9 ? '9+' : unreadCount}
-                  </span>
-                </div>
-              )}
-            </div>
-            <span className="text-xs font-medium">
-              {isAuthenticated ? 'Alerts' : 'Sign In'}
-            </span>
-          </button></Bell>
+                {isAuthenticated && unreadCount > 0 && (
+                  <div className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center">
+                    <span className="text-white text-xs font-bold">
+                      {unreadCount > 9 ? '9+' : unreadCount}
+                    </span>
+                  </div>
+                )}
+              </div>
+              <span className="text-xs font-medium">
+                {isAuthenticated ? 'Alerts' : 'Sign In'}
+              </span>
+            </button>
+                </Bell>
               </div>
             )}
             <Shield className="w-10 h-10 text-red-200" />
