@@ -37,6 +37,14 @@ const Dashboard = () => {
     openSignUp();
   };
 
+  const handleNotificationClick = () => {
+    if (isAuthenticated) {
+      setShowNotifications(true);
+    } else {
+      openSignIn();
+    }
+  };
+
   return (
     <div className="pb-20">
       {/* Welcome Banner for Anonymous Users */}
