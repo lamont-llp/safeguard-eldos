@@ -1,21 +1,27 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, AlertTriangle, CheckCircle, Clock, MapPin, Users, TrendingUp, Bell } from 'lucide-react';
+import { Shield, AlertTriangle, CheckCircle, Clock, MapPin, Users, TrendingUp, Bell, Map, Navigation2, Crosshair } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { useAuthModal } from '../components/AuthModal';
 import { useIncidents } from '../hooks/useIncidents';
+import { useLocation } from '../hooks/useLocation';
 import EmergencyButton from '../components/EmergencyButton';
 import IncidentCard from '../components/IncidentCard';
 import SafetyStatus from '../components/SafetyStatus';
+import MapComponent from '../components/MapComponent';
 import { useNotifications } from '../hooks/useNotifications';
 import NotificationCenter from '../components/NotificationCenter';
 
 const Dashboard = () => {
   const { isAuthenticated, profile } = useAuth();
   const { openSignUp, AuthModal } = useAuthModal();
-  const { incidents, loading, verifyIncidentReport } = useIncidents();
+  const { incidents, loading, verifyIncidentReport, loadIncidentsNearLocation } = useIncidents();
+  const { latitude, longitude, hasLocation, getCurrentLocation, error: locationError } = useLocation();
   const [showWelcome, setShowWelcome] = useState(false);
   const { unreadCount } = useNotifications();
   const [showNotifications, setShowNotifications] = useState(false);
+  const [showMap, setShowMap] = useState(false);
+  const [selectedIncident, setSelectedIncident] = useState(null);
+  const [locationStatus, setLocationStatus] = useState('detecting');
 
   const safetyMetrics = {
     activeIncidents: incidents.filter(i => !i.is_resolved).length,
@@ -32,6 +38,19 @@ const Dashboard = () => {
     }
   }, [isAuthenticated]);
 
+  useEffect(() => {
+    // Update location status and load nearby incidents
+    if (hasLocation && latitude && longitude) {
+      setLocationStatus('located');
+      // Load incidents within 5km radius
+      loadIncidentsNearLocation(latitude, longitude, 5000);
+    } else if (locationError) {
+      setLocationStatus('error');
+    } else {
+      setLocationStatus('detecting');
+    }
+  }, [hasLocation, latitude, longitude, locationError, loadIncidentsNearLocation]);
+
   const handleJoinCommunity = () => {
     setShowWelcome(false);
     openSignUp();
@@ -44,6 +63,60 @@ const Dashboard = () => {
       openSignIn();
     }
   };
+
+  const handleIncidentMapClick = (incident) => {
+    setSelectedIncident(incident);
+    setShowMap(false);
+  };
+
+  const handleGetLocation = () => {
+    setLocationStatus('detecting');
+    getCurrentLocation();
+  };
+
+  const getLocationStatusInfo = () => {
+    switch (locationStatus) {
+      case 'detecting':
+        return {
+          icon: <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>,
+          text: 'Detecting location...',
+          color: 'text-blue-600'
+        };
+      case 'located':
+        return {
+          icon: <Crosshair className="w-4 h-4 text-green-600" />,
+          text: 'Location detected',
+          color: 'text-green-600'
+        };
+      case 'error':
+        return {
+          icon: <AlertTriangle className="w-4 h-4 text-red-600" />,
+          text: 'Location unavailable',
+          color: 'text-red-600'
+        };
+      default:
+        return {
+          icon: <MapPin className="w-4 h-4 text-gray-400" />,
+          text: 'Location unknown',
+          color: 'text-gray-400'
+        };
+    }
+  };
+
+  const locationInfo = getLocationStatusInfo();
+
+  // Convert incidents for map display
+  const mapIncidents = incidents.map(incident => ({
+    id: incident.id,
+    latitude: latitude || -26.3054, // Use current location or default
+    longitude: longitude || 27.9389,
+    incident_type: incident.incident_type,
+    severity: incident.severity,
+    title: incident.title,
+    is_verified: incident.is_verified,
+    is_urgent: incident.is_urgent,
+    created_at: incident.created_at
+  }));
 
   return (
     <div className="pb-20">
@@ -92,33 +165,19 @@ const Dashboard = () => {
           </div>
           <div className="flex items-center space-x-3">
             {isAuthenticated && (
-              <div className="bg-red-500 bg-opacity-30 p-2 rounded-lg">
-                {/*<Bell className="w-6 h-6 text-red-100">*/}
-                 {/* Notifications Button */}
-          <button
-            onClick={handleNotificationClick}
-            className={`flex flex-col items-center py-2 px-3 rounded-lg transition-all duration-200 ${
-              showNotifications
-                ? 'text-blue-600 bg-blue-50'
-                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50 hover:bg-opacity-20'
-            }`}
-          >
-            <div className="relative">
-              <Bell className="w-6 h-6 text-red-100" />
-                {isAuthenticated && unreadCount > 0 && (
-                  <div className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center">
+              <button
+                onClick={handleNotificationClick}
+                className="bg-red-500 bg-opacity-30 p-2 rounded-lg hover:bg-opacity-50 transition-colors relative"
+              >
+                <Bell className="w-6 h-6 text-red-100" />
+                {unreadCount > 0 && (
+                  <div className="absolute -top-1 -right-1 w-4 h-4 bg-yellow-500 rounded-full flex items-center justify-center">
                     <span className="text-white text-xs font-bold">
                       {unreadCount > 9 ? '9+' : unreadCount}
                     </span>
                   </div>
                 )}
-              </div>
-              <span className="text-xs font-medium text-red-100">
-                {isAuthenticated ? 'Alerts' : 'Sign In'}
-              </span>
-            </button>
-                {/*</Bell>*/}
-              </div>
+              </button>
             )}
             <Shield className="w-10 h-10 text-red-200" />
           </div>
@@ -127,10 +186,83 @@ const Dashboard = () => {
         <SafetyStatus />
       </div>
 
+      {/* Location Status Bar */}
+      <div className="px-6 -mt-4 relative z-10">
+        <div className="bg-white rounded-xl shadow-sm border p-4 mb-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              {locationInfo.icon}
+              <div>
+                <p className={`font-medium ${locationInfo.color}`}>{locationInfo.text}</p>
+                {hasLocation && (
+                  <p className="text-xs text-gray-500">
+                    Monitoring {incidents.length} incidents in your area
+                  </p>
+                )}
+                {locationError && (
+                  <p className="text-xs text-red-500">{locationError}</p>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center space-x-2">
+              {hasLocation && (
+                <button
+                  onClick={() => setShowMap(!showMap)}
+                  className={`flex items-center space-x-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    showMap 
+                      ? 'bg-blue-600 text-white' 
+                      : 'bg-blue-50 text-blue-600 hover:bg-blue-100'
+                  }`}
+                >
+                  <Map className="w-4 h-4" />
+                  <span>{showMap ? 'Hide Map' : 'Show Map'}</span>
+                </button>
+              )}
+              {!hasLocation && (
+                <button
+                  onClick={handleGetLocation}
+                  className="flex items-center space-x-1 px-3 py-2 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg text-sm font-medium transition-colors"
+                >
+                  <Navigation2 className="w-4 h-4" />
+                  <span>Enable Location</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Emergency Button */}
       <div className="px-6 -mt-8 relative z-10">
         <EmergencyButton />
       </div>
+
+      {/* Map View */}
+      {showMap && hasLocation && (
+        <div className="px-6 mt-6">
+          <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+            <div className="p-4 border-b border-gray-200">
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold text-gray-900">Area Safety Map</h3>
+                <div className="flex items-center space-x-2 text-sm text-gray-600">
+                  <MapPin className="w-4 h-4" />
+                  <span>{incidents.length} incidents nearby</span>
+                </div>
+              </div>
+            </div>
+            <MapComponent
+              latitude={latitude}
+              longitude={longitude}
+              incidents={mapIncidents}
+              onIncidentClick={handleIncidentMapClick}
+              className="h-80"
+              showControls={true}
+              interactive={true}
+              zoom={15}
+            />
+          </div>
+        </div>
+      )}
 
       {/* User Status */}
       {isAuthenticated && profile && (
@@ -142,6 +274,11 @@ const Dashboard = () => {
                 <p className="text-sm text-gray-600">
                   Reputation: {profile.reputation_score} points • {profile.community_role}
                 </p>
+                {hasLocation && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Monitoring {profile.notification_radius}m radius around your location
+                  </p>
+                )}
               </div>
               <div className="bg-green-500 p-2 rounded-lg">
                 <CheckCircle className="w-5 h-5 text-white" />
@@ -159,6 +296,9 @@ const Dashboard = () => {
               <div>
                 <p className="text-gray-500 text-sm">Active Incidents</p>
                 <p className="text-2xl font-bold text-gray-900">{safetyMetrics.activeIncidents}</p>
+                {hasLocation && (
+                  <p className="text-xs text-gray-500">In your area</p>
+                )}
               </div>
               <AlertTriangle className="w-8 h-8 text-amber-500" />
             </div>
@@ -169,6 +309,7 @@ const Dashboard = () => {
               <div>
                 <p className="text-gray-500 text-sm">Community</p>
                 <p className="text-2xl font-bold text-gray-900">{safetyMetrics.communityMembers}</p>
+                <p className="text-xs text-gray-500">Active members</p>
               </div>
               <Users className="w-8 h-8 text-blue-500" />
             </div>
@@ -179,6 +320,7 @@ const Dashboard = () => {
               <div>
                 <p className="text-gray-500 text-sm">Safe Routes</p>
                 <p className="text-2xl font-bold text-gray-900">{safetyMetrics.safeRoutes}</p>
+                <p className="text-xs text-gray-500">Verified paths</p>
               </div>
               <CheckCircle className="w-8 h-8 text-green-500" />
             </div>
@@ -189,6 +331,7 @@ const Dashboard = () => {
               <div>
                 <p className="text-gray-500 text-sm">Response</p>
                 <p className="text-2xl font-bold text-gray-900">{safetyMetrics.responseTime}</p>
+                <p className="text-xs text-gray-500">Avg response</p>
               </div>
               <Clock className="w-8 h-8 text-purple-500" />
             </div>
@@ -196,10 +339,39 @@ const Dashboard = () => {
         </div>
       </div>
 
+      {/* Location-Based Insights */}
+      {hasLocation && (
+        <div className="px-6 mt-6">
+          <div className="bg-blue-50 p-4 rounded-xl border border-blue-200">
+            <div className="flex items-start space-x-3">
+              <MapPin className="w-5 h-5 text-blue-600 mt-0.5" />
+              <div className="flex-1">
+                <h3 className="font-semibold text-blue-900">Location-Based Insights</h3>
+                <div className="mt-2 space-y-1 text-sm text-blue-800">
+                  <p>• {incidents.filter(i => !i.is_resolved).length} active incidents in your monitoring area</p>
+                  <p>• {incidents.filter(i => i.is_verified).length} community-verified reports</p>
+                  <p>• {incidents.filter(i => new Date(i.created_at) > new Date(Date.now() - 24*60*60*1000)).length} incidents reported in the last 24 hours</p>
+                </div>
+                {!showMap && (
+                  <button
+                    onClick={() => setShowMap(true)}
+                    className="mt-2 text-blue-600 text-sm font-medium hover:text-blue-800 transition-colors"
+                  >
+                    View on Map →
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Recent Incidents */}
       <div className="px-6 mt-8">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-bold text-gray-900">Recent Activity</h2>
+          <h2 className="text-xl font-bold text-gray-900">
+            {hasLocation ? 'Nearby Activity' : 'Recent Activity'}
+          </h2>
           <TrendingUp className="w-5 h-5 text-gray-400" />
         </div>
         
@@ -210,18 +382,33 @@ const Dashboard = () => {
           </div>
         ) : (
           <div className="space-y-3">
-            {incidents.slice(0, 5).map((incident) => (
-              <IncidentCard 
-                key={incident.id} 
-                incident={incident} 
-                onVerify={verifyIncidentReport}
-              />
+            {/* Show selected incident from map first */}
+            {selectedIncident && (
+              <div className="border-2 border-blue-500 rounded-xl">
+                <IncidentCard 
+                  incident={selectedIncident} 
+                  onVerify={verifyIncidentReport}
+                />
+              </div>
+            )}
+            
+            {incidents.slice(0, selectedIncident ? 4 : 5).map((incident) => (
+              incident.id !== selectedIncident?.id && (
+                <IncidentCard 
+                  key={incident.id} 
+                  incident={incident} 
+                  onVerify={verifyIncidentReport}
+                />
+              )
             ))}
+            
             {incidents.length === 0 && (
               <div className="text-center py-8">
                 <Shield className="w-12 h-12 text-gray-300 mx-auto mb-4" />
                 <p className="text-gray-500">No recent incidents reported</p>
-                <p className="text-gray-400 text-sm">Your community is safe!</p>
+                <p className="text-gray-400 text-sm">
+                  {hasLocation ? 'Your area is safe!' : 'Enable location to see nearby incidents'}
+                </p>
               </div>
             )}
           </div>
@@ -240,6 +427,11 @@ const Dashboard = () => {
               <p className="text-blue-700 text-sm mt-1">
                 Join our neighborhood watch patrol at 7 PM. Meet at Extension 8 Community Hall.
               </p>
+              {hasLocation && (
+                <p className="text-blue-600 text-xs mt-1">
+                  📍 2.3km from your location
+                </p>
+              )}
               <button className="mt-2 text-blue-600 text-sm font-medium hover:text-blue-800 transition-colors">
                 Learn More →
               </button>

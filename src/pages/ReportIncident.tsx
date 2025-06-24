@@ -1,16 +1,25 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Camera, Mic, MapPin, Shield, AlertCircle, Clock, Phone, Send, Loader2, CheckCircle } from 'lucide-react';
+import { ArrowLeft, Camera, Mic, MapPin, Shield, AlertCircle, Clock, Phone, Send, Loader2, CheckCircle, Navigation2, Map, Crosshair } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuthContext } from '../contexts/AuthContext';
 import { useIncidents } from '../hooks/useIncidents';
 import { useLocation } from '../hooks/useLocation';
 import { useAuthModal } from '../components/AuthModal';
+import MapComponent from '../components/MapComponent';
 
 const ReportIncident = () => {
   const navigate = useNavigate();
   const { isAuthenticated } = useAuthContext();
   const { reportIncident } = useIncidents();
-  const { latitude, longitude, getLocationString, getCurrentLocation } = useLocation();
+  const { 
+    latitude, 
+    longitude, 
+    hasLocation, 
+    getCurrentLocation, 
+    getLocationString, 
+    error: locationError,
+    accuracy 
+  } = useLocation();
   const { openSignIn, AuthModal } = useAuthModal();
 
   const [selectedType, setSelectedType] = useState('');
@@ -24,6 +33,9 @@ const ReportIncident = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [error, setError] = useState('');
+  const [showMap, setShowMap] = useState(false);
+  const [manualLocation, setManualLocation] = useState({ lat: null, lng: null });
+  const [locationMethod, setLocationMethod] = useState('auto'); // 'auto' or 'manual'
 
   const incidentTypes = [
     { 
@@ -79,12 +91,12 @@ const ReportIncident = () => {
 
   useEffect(() => {
     // Auto-populate location when available
-    if (latitude && longitude) {
+    if (hasLocation && latitude && longitude && locationMethod === 'auto') {
       getLocationString().then(address => {
         setLocationAddress(address);
       });
     }
-  }, [latitude, longitude]);
+  }, [latitude, longitude, hasLocation, locationMethod]);
 
   useEffect(() => {
     // Auto-generate title based on type and severity
@@ -109,8 +121,12 @@ const ReportIncident = () => {
       return;
     }
 
-    if (!latitude || !longitude) {
-      setError('Location is required. Please enable location services or enter manually.');
+    // Use manual location if set, otherwise use current location
+    const reportLat = manualLocation.lat || latitude;
+    const reportLng = manualLocation.lng || longitude;
+
+    if (!reportLat || !reportLng) {
+      setError('Location is required. Please enable location services or select manually on the map.');
       return;
     }
 
@@ -124,8 +140,8 @@ const ReportIncident = () => {
         description,
         location_address: locationAddress,
         location_area: locationArea,
-        latitude,
-        longitude,
+        latitude: reportLat,
+        longitude: reportLng,
         is_urgent: isUrgent
       });
 
@@ -147,13 +163,61 @@ const ReportIncident = () => {
   };
 
   const handleGetCurrentLocation = () => {
+    setLocationMethod('auto');
+    setManualLocation({ lat: null, lng: null });
     getCurrentLocation();
     setLocationAddress('Getting location...');
+  };
+
+  const handleMapClick = (e) => {
+    if (e.lngLat) {
+      setLocationMethod('manual');
+      setManualLocation({ lat: e.lngLat.lat, lng: e.lngLat.lng });
+      setLocationAddress(`${e.lngLat.lat.toFixed(6)}, ${e.lngLat.lng.toFixed(6)}`);
+    }
   };
 
   const handleEmergencyCall = () => {
     window.open('tel:10111', '_self');
   };
+
+  const getLocationStatusInfo = () => {
+    if (manualLocation.lat && manualLocation.lng) {
+      return {
+        icon: <MapPin className="w-4 h-4 text-blue-600" />,
+        text: 'Manual location selected',
+        color: 'text-blue-600',
+        accuracy: null
+      };
+    }
+    
+    if (hasLocation) {
+      return {
+        icon: <Crosshair className="w-4 h-4 text-green-600" />,
+        text: 'Current location detected',
+        color: 'text-green-600',
+        accuracy: accuracy
+      };
+    }
+    
+    if (locationError) {
+      return {
+        icon: <AlertCircle className="w-4 h-4 text-red-600" />,
+        text: 'Location unavailable',
+        color: 'text-red-600',
+        accuracy: null
+      };
+    }
+    
+    return {
+      icon: <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>,
+      text: 'Detecting location...',
+      color: 'text-blue-600',
+      accuracy: null
+    };
+  };
+
+  const locationInfo = getLocationStatusInfo();
 
   if (showSuccess) {
     return (
@@ -226,6 +290,83 @@ const ReportIncident = () => {
               >
                 Sign In Now →
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Location Status */}
+      <div className="px-6 mt-4">
+        <div className="bg-white rounded-xl shadow-sm border p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              {locationInfo.icon}
+              <div>
+                <p className={`font-medium ${locationInfo.color}`}>{locationInfo.text}</p>
+                {locationInfo.accuracy && (
+                  <p className="text-xs text-gray-500">
+                    Accuracy: ±{Math.round(locationInfo.accuracy)}m
+                  </p>
+                )}
+                {locationError && (
+                  <p className="text-xs text-red-500">{locationError}</p>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={() => setShowMap(!showMap)}
+                className={`flex items-center space-x-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  showMap 
+                    ? 'bg-blue-600 text-white' 
+                    : 'bg-blue-50 text-blue-600 hover:bg-blue-100'
+                }`}
+              >
+                <Map className="w-4 h-4" />
+                <span>{showMap ? 'Hide Map' : 'Select on Map'}</span>
+              </button>
+              {!hasLocation && (
+                <button
+                  onClick={handleGetCurrentLocation}
+                  className="flex items-center space-x-1 px-3 py-2 bg-green-50 text-green-600 hover:bg-green-100 rounded-lg text-sm font-medium transition-colors"
+                >
+                  <Navigation2 className="w-4 h-4" />
+                  <span>Use Current</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Map for Location Selection */}
+      {showMap && (
+        <div className="px-6 mt-4">
+          <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+            <div className="p-4 border-b border-gray-200">
+              <h3 className="font-semibold text-gray-900">Select Incident Location</h3>
+              <p className="text-sm text-gray-600">Tap on the map to set the exact location</p>
+            </div>
+            <div className="relative">
+              <MapComponent
+                latitude={manualLocation.lat || latitude || -26.3054}
+                longitude={manualLocation.lng || longitude || 27.9389}
+                className="h-64"
+                showControls={false}
+                interactive={true}
+                zoom={16}
+                onMapClick={handleMapClick}
+              />
+              {(manualLocation.lat || hasLocation) && (
+                <div className="absolute top-4 right-4 bg-white rounded-lg shadow-lg p-2">
+                  <div className="flex items-center space-x-2 text-sm">
+                    <div className="w-2 h-2 bg-blue-600 rounded-full"></div>
+                    <span className="text-gray-700">
+                      {manualLocation.lat ? 'Selected Location' : 'Current Location'}
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -342,6 +483,37 @@ const ReportIncident = () => {
               placeholder="Area/Extension (e.g., Extension 8)"
               className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
             />
+            
+            {/* Location Method Indicator */}
+            <div className="flex items-center justify-between text-sm">
+              <div className="flex items-center space-x-2 text-gray-600">
+                {manualLocation.lat ? (
+                  <>
+                    <MapPin className="w-4 h-4 text-blue-600" />
+                    <span>Using map-selected location</span>
+                  </>
+                ) : hasLocation ? (
+                  <>
+                    <Crosshair className="w-4 h-4 text-green-600" />
+                    <span>Using current location</span>
+                  </>
+                ) : (
+                  <>
+                    <AlertCircle className="w-4 h-4 text-amber-600" />
+                    <span>Location required</span>
+                  </>
+                )}
+              </div>
+              {(manualLocation.lat || hasLocation) && (
+                <button
+                  type="button"
+                  onClick={() => setShowMap(!showMap)}
+                  className="text-blue-600 hover:text-blue-800 transition-colors"
+                >
+                  {showMap ? 'Hide Map' : 'View on Map'}
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -421,7 +593,7 @@ const ReportIncident = () => {
         {/* Submit Button */}
         <button
           type="submit"
-          disabled={!isAuthenticated || !selectedType || !title || !locationAddress || isSubmitting}
+          disabled={!isAuthenticated || !selectedType || !title || !locationAddress || isSubmitting || (!hasLocation && !manualLocation.lat)}
           className="w-full bg-red-600 text-white py-4 px-6 rounded-xl font-semibold text-lg disabled:bg-gray-300 disabled:cursor-not-allowed hover:bg-red-700 transition-colors flex items-center justify-center space-x-2"
         >
           {isSubmitting ? (
