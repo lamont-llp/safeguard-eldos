@@ -6,6 +6,7 @@ import { useIncidents } from '../hooks/useIncidents';
 import { useLocation } from '../hooks/useLocation';
 import { useAuthModal } from '../components/AuthModal';
 import MapComponent from '../components/MapComponent';
+import LocationAutocomplete from '../components/LocationAutocomplete';
 
 const ReportIncident = () => {
   const navigate = useNavigate();
@@ -167,6 +168,20 @@ const ReportIncident = () => {
     setManualLocation({ lat: null, lng: null });
     getCurrentLocation();
     setLocationAddress('Getting location...');
+  };
+
+  const handleLocationSelect = (location: { address: string; lat: number; lng: number }) => {
+    setLocationMethod('manual');
+    setManualLocation({ lat: location.lat, lng: location.lng });
+    setLocationAddress(location.address);
+  };
+
+  const handleLocationInputChange = (value: string, coordinates?: { lat: number; lng: number }) => {
+    setLocationAddress(value);
+    if (coordinates) {
+      setLocationMethod('manual');
+      setManualLocation({ lat: coordinates.lat, lng: coordinates.lng });
+    }
   };
 
   const handleMapClick = (e) => {
@@ -453,29 +468,23 @@ const ReportIncident = () => {
           </div>
         )}
 
-        {/* Location */}
+        {/* Location with Autocomplete */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
             Location *
           </label>
           <div className="space-y-3">
-            <div className="relative">
-              <input
-                type="text"
-                value={locationAddress}
-                onChange={(e) => setLocationAddress(e.target.value)}
-                placeholder="Enter specific address or landmark"
-                className="w-full p-4 border border-gray-300 rounded-xl focus:ring-2 focus:ring-red-500 focus:border-red-500 pr-12"
-                required
-              />
-              <button
-                type="button"
-                onClick={handleGetCurrentLocation}
-                className="absolute right-3 top-1/2 transform -translate-y-1/2 text-red-600 hover:text-red-700 transition-colors"
-              >
-                <MapPin className="w-5 h-5" />
-              </button>
-            </div>
+            <LocationAutocomplete
+              value={locationAddress}
+              onChange={handleLocationInputChange}
+              onLocationSelect={handleLocationSelect}
+              placeholder="Enter specific address or landmark"
+              icon={<MapPin className="w-5 h-5 text-gray-400" />}
+              showCurrentLocation={true}
+              onUseCurrentLocation={handleGetCurrentLocation}
+              className="focus:ring-red-500 focus:border-red-500"
+            />
+            
             <input
               type="text"
               value={locationArea}
@@ -490,7 +499,7 @@ const ReportIncident = () => {
                 {manualLocation.lat ? (
                   <>
                     <MapPin className="w-4 h-4 text-blue-600" />
-                    <span>Using map-selected location</span>
+                    <span>Using selected location</span>
                   </>
                 ) : hasLocation ? (
                   <>

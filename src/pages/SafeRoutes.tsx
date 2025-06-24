@@ -5,6 +5,7 @@ import { useSafeRoutes } from '../hooks/useSafeRoutes';
 import { useLocation } from '../hooks/useLocation';
 import { useAuthContext } from '../contexts/AuthContext';
 import { useAuthModal } from '../components/AuthModal';
+import LocationAutocomplete from '../components/LocationAutocomplete';
 
 const SafeRoutes = () => {
   const { isAuthenticated } = useAuthContext();
@@ -27,6 +28,8 @@ const SafeRoutes = () => {
   const [activeTab, setActiveTab] = useState('find');
   const [origin, setOrigin] = useState('');
   const [destination, setDestination] = useState('');
+  const [originCoords, setOriginCoords] = useState({ lat: null, lng: null });
+  const [destinationCoords, setDestinationCoords] = useState({ lat: null, lng: null });
   const [optimalRoutes, setOptimalRoutes] = useState([]);
   const [selectedRoute, setSelectedRoute] = useState(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -83,13 +86,52 @@ const SafeRoutes = () => {
       // Set current location as origin
       getLocationString().then(address => {
         setOrigin(address);
+        setOriginCoords({ lat: latitude, lng: longitude });
       });
     }
   }, [latitude, longitude]);
 
+  const handleOriginSelect = (location: { address: string; lat: number; lng: number }) => {
+    setOrigin(location.address);
+    setOriginCoords({ lat: location.lat, lng: location.lng });
+  };
+
+  const handleDestinationSelect = (location: { address: string; lat: number; lng: number }) => {
+    setDestination(location.address);
+    setDestinationCoords({ lat: location.lat, lng: location.lng });
+  };
+
+  const handleOriginChange = (value: string, coordinates?: { lat: number; lng: number }) => {
+    setOrigin(value);
+    if (coordinates) {
+      setOriginCoords({ lat: coordinates.lat, lng: coordinates.lng });
+    }
+  };
+
+  const handleDestinationChange = (value: string, coordinates?: { lat: number; lng: number }) => {
+    setDestination(value);
+    if (coordinates) {
+      setDestinationCoords({ lat: coordinates.lat, lng: coordinates.lng });
+    }
+  };
+
+  const handleUseCurrentLocation = () => {
+    if (latitude && longitude) {
+      getLocationString().then(address => {
+        setOrigin(address);
+        setOriginCoords({ lat: latitude, lng: longitude });
+      });
+    }
+  };
+
   const handleFindRoutes = async () => {
     if (!origin || !destination) {
       setSearchError('Please enter both origin and destination');
+      return;
+    }
+
+    if (!originCoords.lat || !destinationCoords.lat) {
+      setSearchError('Please select valid locations from the suggestions');
       return;
     }
 
@@ -98,23 +140,17 @@ const SafeRoutes = () => {
     setOptimalRoutes([]);
 
     try {
-      // For demo purposes, we'll use the current location as start coordinates
-      // In a real app, you'd geocode the addresses
-      if (latitude && longitude) {
-        const { data, error } = await findOptimalRoute(
-          latitude,
-          longitude,
-          latitude + 0.01, // Mock destination coordinates
-          longitude + 0.01,
-          2000
-        );
+      const { data, error } = await findOptimalRoute(
+        originCoords.lat,
+        originCoords.lng,
+        destinationCoords.lat,
+        destinationCoords.lng,
+        2000
+      );
 
-        if (error) throw error;
+      if (error) throw error;
 
-        setOptimalRoutes(data || []);
-      } else {
-        throw new Error('Location not available');
-      }
+      setOptimalRoutes(data || []);
     } catch (err) {
       setSearchError(err.message || 'Failed to find routes');
     } finally {
@@ -137,13 +173,12 @@ const SafeRoutes = () => {
     setIsCreating(true);
 
     try {
-      // For demo purposes, use current location as start coordinates
       const routeData = {
         ...createForm,
-        start_lat: latitude || 0,
-        start_lng: longitude || 0,
-        end_lat: (latitude || 0) + 0.01, // Mock end coordinates
-        end_lng: (longitude || 0) + 0.01
+        start_lat: createForm.start_lat || latitude || 0,
+        start_lng: createForm.start_lng || longitude || 0,
+        end_lat: createForm.end_lat || (latitude || 0) + 0.01,
+        end_lng: createForm.end_lng || (longitude || 0) + 0.01
       };
 
       const { data, error } = await createNewRoute(routeData);
@@ -174,6 +209,42 @@ const SafeRoutes = () => {
       console.error('Failed to create route:', err);
     } finally {
       setIsCreating(false);
+    }
+  };
+
+  const handleCreateFormLocationSelect = (field: 'start' | 'end') => (location: { address: string; lat: number; lng: number }) => {
+    if (field === 'start') {
+      setCreateForm({
+        ...createForm,
+        start_address: location.address,
+        start_lat: location.lat,
+        start_lng: location.lng
+      });
+    } else {
+      setCreateForm({
+        ...createForm,
+        end_address: location.address,
+        end_lat: location.lat,
+        end_lng: location.lng
+      });
+    }
+  };
+
+  const handleCreateFormLocationChange = (field: 'start' | 'end') => (value: string, coordinates?: { lat: number; lng: number }) => {
+    if (field === 'start') {
+      setCreateForm({
+        ...createForm,
+        start_address: value,
+        start_lat: coordinates?.lat || null,
+        start_lng: coordinates?.lng || null
+      });
+    } else {
+      setCreateForm({
+        ...createForm,
+        end_address: value,
+        end_lat: coordinates?.lat || null,
+        end_lng: coordinates?.lng || null
+      });
     }
   };
 
@@ -286,25 +357,27 @@ const SafeRoutes = () => {
               <h2 className="text-lg font-semibold text-gray-900 mb-4">Plan Your Route</h2>
               
               <div className="space-y-4">
-                <div className="relative">
-                  <MapPin className="absolute left-3 top-3 w-5 h-5 text-green-500" />
-                  <input
-                    type="text"
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">From</label>
+                  <LocationAutocomplete
                     value={origin}
-                    onChange={(e) => setOrigin(e.target.value)}
-                    placeholder="From (current location)"
-                    className="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    onChange={handleOriginChange}
+                    onLocationSelect={handleOriginSelect}
+                    placeholder="Enter starting location"
+                    icon={<MapPin className="w-5 h-5 text-green-500" />}
+                    showCurrentLocation={true}
+                    onUseCurrentLocation={handleUseCurrentLocation}
                   />
                 </div>
                 
-                <div className="relative">
-                  <MapPin className="absolute left-3 top-3 w-5 h-5 text-red-500" />
-                  <input
-                    type="text"
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">To</label>
+                  <LocationAutocomplete
                     value={destination}
-                    onChange={(e) => setDestination(e.target.value)}
-                    placeholder="To (destination)"
-                    className="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    onChange={handleDestinationChange}
+                    onLocationSelect={handleDestinationSelect}
+                    placeholder="Enter destination"
+                    icon={<MapPin className="w-5 h-5 text-red-500" />}
                   />
                 </div>
                 
@@ -410,7 +483,7 @@ const SafeRoutes = () => {
                   <option value="all">All Routes</option>
                   <option value="safe">Safe (75+)</option>
                   <option value="moderate">Moderate (50-74)</option>
-                  <option value="caution">Use Caution (&lt;50)</option>
+                  <option value="caution">Use Caution (<50)</option>
                 </select>
               </div>
             </div>
@@ -667,25 +740,23 @@ const SafeRoutes = () => {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Start Address *</label>
-                <input
-                  type="text"
+                <LocationAutocomplete
                   value={createForm.start_address}
-                  onChange={(e) => setCreateForm({ ...createForm, start_address: e.target.value })}
+                  onChange={handleCreateFormLocationChange('start')}
+                  onLocationSelect={handleCreateFormLocationSelect('start')}
                   placeholder="Starting point address"
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  required
+                  className="focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">End Address *</label>
-                <input
-                  type="text"
+                <LocationAutocomplete
                   value={createForm.end_address}
-                  onChange={(e) => setCreateForm({ ...createForm, end_address: e.target.value })}
+                  onChange={handleCreateFormLocationChange('end')}
+                  onLocationSelect={handleCreateFormLocationSelect('end')}
                   placeholder="Destination address"
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  required
+                  className="focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
 
