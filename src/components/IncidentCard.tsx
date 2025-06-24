@@ -33,6 +33,7 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasVerified, setHasVerified] = useState(false);
   const [isCheckingVerification, setIsCheckingVerification] = useState(false);
+  const [verificationError, setVerificationError] = useState('');
 
   const getSeverityColor = (severity: string) => {
     switch (severity) {
@@ -109,7 +110,7 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
           .eq('verifier_id', profile.id)
           .maybeSingle();
 
-        if (error) {
+        if (error && error.code !== 'PGRST116') { // PGRST116 is "not found" which is expected
           console.error('Error checking verification status:', error);
           setHasVerified(false);
         } else {
@@ -130,14 +131,17 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
     if (!selectedVerificationType || !onVerify) return;
 
     setIsSubmitting(true);
+    setVerificationError('');
+    
     try {
       await onVerify(incident.id, selectedVerificationType, verificationNotes || undefined);
       setHasVerified(true);
       setShowVerificationPanel(false);
       setSelectedVerificationType(null);
       setVerificationNotes('');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Verification failed:', error);
+      setVerificationError(error.message || 'Failed to submit verification');
     } finally {
       setIsSubmitting(false);
     }
@@ -147,11 +151,14 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
     if (!onVerify) return;
 
     setIsSubmitting(true);
+    setVerificationError('');
+    
     try {
       await onVerify(incident.id, type);
       setHasVerified(true);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Quick verification failed:', error);
+      setVerificationError(error.message || 'Failed to submit verification');
     } finally {
       setIsSubmitting(false);
     }
@@ -295,6 +302,13 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
                 </div>
               )}
             </div>
+
+            {/* Verification Error */}
+            {verificationError && (
+              <div className="mt-2 text-xs text-red-600 bg-red-50 p-2 rounded">
+                {verificationError}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -309,6 +323,7 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
                 setShowVerificationPanel(false);
                 setSelectedVerificationType(null);
                 setVerificationNotes('');
+                setVerificationError('');
               }}
               className="p-1 hover:bg-gray-200 rounded-lg transition-colors"
             >

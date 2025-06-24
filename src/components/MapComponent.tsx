@@ -37,6 +37,7 @@ interface MapComponentProps {
   }>;
   onIncidentClick?: (incident: any) => void;
   onRouteClick?: (route: any) => void;
+  onMapClick?: (e: { lngLat: { lat: number; lng: number } }) => void;
   className?: string;
   showControls?: boolean;
   interactive?: boolean;
@@ -51,6 +52,7 @@ const MapComponent: React.FC<MapComponentProps> = ({
   communityGroups = [],
   onIncidentClick,
   onRouteClick,
+  onMapClick,
   className = "w-full h-64",
   showControls = true,
   interactive = true,
@@ -61,6 +63,7 @@ const MapComponent: React.FC<MapComponentProps> = ({
   const [mapLoaded, setMapLoaded] = useState(false);
   const [activeLayer, setActiveLayer] = useState<'incidents' | 'routes' | 'groups'>('incidents');
   const [userLocationMarker, setUserLocationMarker] = useState<maplibregl.Marker | null>(null);
+  const [markers, setMarkers] = useState<maplibregl.Marker[]>([]);
 
   // Initialize map
   useEffect(() => {
@@ -95,12 +98,25 @@ const MapComponent: React.FC<MapComponentProps> = ({
       setMapLoaded(true);
     });
 
+    // Add click handler for map
+    if (onMapClick) {
+      map.current.on('click', (e) => {
+        onMapClick({ lngLat: { lat: e.lngLat.lat, lng: e.lngLat.lng } });
+      });
+    }
+
     // Add navigation controls if interactive
     if (interactive && showControls) {
       map.current.addControl(new maplibregl.NavigationControl(), 'top-right');
     }
 
     return () => {
+      // Clean up markers
+      markers.forEach(marker => marker.remove());
+      if (userLocationMarker) {
+        userLocationMarker.remove();
+      }
+      
       if (map.current) {
         map.current.remove();
         map.current = null;
@@ -129,15 +145,21 @@ const MapComponent: React.FC<MapComponentProps> = ({
     }
   }, [latitude, longitude, mapLoaded]);
 
+  // Clean up existing markers
+  const cleanupMarkers = () => {
+    markers.forEach(marker => marker.remove());
+    setMarkers([]);
+  };
+
   // Add incidents to map
   useEffect(() => {
     if (!map.current || !mapLoaded) return;
 
-    // Remove existing incident markers
-    const existingMarkers = document.querySelectorAll('.incident-marker');
-    existingMarkers.forEach(marker => marker.remove());
+    cleanupMarkers();
 
     if (activeLayer === 'incidents') {
+      const newMarkers: maplibregl.Marker[] = [];
+      
       incidents.forEach(incident => {
         const el = document.createElement('div');
         el.className = 'incident-marker';
@@ -147,6 +169,9 @@ const MapComponent: React.FC<MapComponentProps> = ({
         el.style.cursor = 'pointer';
         el.style.border = '2px solid white';
         el.style.boxShadow = '0 2px 4px rgba(0,0,0,0.3)';
+        el.style.display = 'flex';
+        el.style.alignItems = 'center';
+        el.style.justifyContent = 'center';
         
         // Color based on severity and urgency
         if (incident.is_urgent) {
@@ -160,22 +185,21 @@ const MapComponent: React.FC<MapComponentProps> = ({
 
         // Add verification indicator
         if (incident.is_verified) {
-          const checkmark = document.createElement('div');
-          checkmark.innerHTML = '✓';
-          checkmark.style.color = 'white';
-          checkmark.style.fontSize = '12px';
-          checkmark.style.textAlign = 'center';
-          checkmark.style.lineHeight = '20px';
-          checkmark.style.fontWeight = 'bold';
-          el.appendChild(checkmark);
+          el.innerHTML = '✓';
+          el.style.color = 'white';
+          el.style.fontSize = '12px';
+          el.style.fontWeight = 'bold';
         }
 
         const marker = new maplibregl.Marker(el)
           .setLngLat([incident.longitude, incident.latitude])
           .addTo(map.current!);
 
+        newMarkers.push(marker);
+
         // Add popup on click
-        el.addEventListener('click', () => {
+        el.addEventListener('click', (e) => {
+          e.stopPropagation();
           if (onIncidentClick) {
             onIncidentClick(incident);
           } else {
@@ -194,6 +218,8 @@ const MapComponent: React.FC<MapComponentProps> = ({
           }
         });
       });
+      
+      setMarkers(newMarkers);
     }
   }, [incidents, mapLoaded, activeLayer, onIncidentClick]);
 
@@ -285,11 +311,11 @@ const MapComponent: React.FC<MapComponentProps> = ({
   useEffect(() => {
     if (!map.current || !mapLoaded) return;
 
-    // Remove existing group markers
-    const existingMarkers = document.querySelectorAll('.group-marker');
-    existingMarkers.forEach(marker => marker.remove());
+    cleanupMarkers();
 
     if (activeLayer === 'groups') {
+      const newMarkers: maplibregl.Marker[] = [];
+      
       communityGroups.forEach(group => {
         const el = document.createElement('div');
         el.className = 'group-marker';
@@ -312,8 +338,11 @@ const MapComponent: React.FC<MapComponentProps> = ({
           .setLngLat([group.longitude, group.latitude])
           .addTo(map.current!);
 
+        newMarkers.push(marker);
+
         // Add popup on click
-        el.addEventListener('click', () => {
+        el.addEventListener('click', (e) => {
+          e.stopPropagation();
           new maplibregl.Popup()
             .setLngLat([group.longitude, group.latitude])
             .setHTML(`
@@ -326,6 +355,8 @@ const MapComponent: React.FC<MapComponentProps> = ({
             .addTo(map.current!);
         });
       });
+      
+      setMarkers(newMarkers);
     }
   }, [communityGroups, mapLoaded, activeLayer]);
 
@@ -425,7 +456,7 @@ const MapComponent: React.FC<MapComponentProps> = ({
               </div>
               <div className="flex items-center space-x-2">
                 <div className="w-4 h-1 bg-red-500"></div>
-                <span className="text-xs text-gray-600">Caution (50)</span>
+                <span className="text-xs text-gray-600">Caution (<50)</span>
               </div>
             </div>
           )}

@@ -5,7 +5,8 @@ import {
   createIncident,
   verifyIncident,
   formatTimeAgo,
-  Incident
+  Incident,
+  supabase
 } from '../lib/supabase';
 import { useAuth } from './useAuth';
 import { useIncidentsContext } from '../contexts/IncidentsContext';
@@ -19,6 +20,7 @@ export const useIncidents = () => {
   const loadIncidents = useCallback(async () => {
     try {
       setLoading(true);
+      setError(null);
       const { data, error } = await getIncidents(50);
       
       if (error) throw error;
@@ -35,13 +37,14 @@ export const useIncidents = () => {
     loadIncidents();
   }, [loadIncidents]);
 
-  const loadIncidentsNearLocation = async (
+  const loadIncidentsNearLocation = useCallback(async (
     latitude: number, 
     longitude: number, 
     radiusMeters = 5000
   ) => {
     try {
       setLoading(true);
+      setError(null);
       const { data, error } = await getIncidentsNearLocation(
         latitude, 
         longitude, 
@@ -56,7 +59,7 @@ export const useIncidents = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [dispatch]);
 
   const reportIncident = async (incidentData: {
     incident_type: Incident['incident_type'];
@@ -118,15 +121,13 @@ export const useIncidents = () => {
       
       if (error) throw error;
 
-      // The server-side trigger will automatically update the incident
-      // verification count and status, so we don't need to do it here.
-      // We'll refresh the incidents to get the updated data.
+      // Refresh the incidents to get updated verification data
       await loadIncidents();
 
       return { data, error: null };
     } catch (err: any) {
       // Handle specific error cases
-      if (err.message?.includes('already verified')) {
+      if (err.message?.includes('already verified') || err.message?.includes('duplicate key')) {
         return { data: null, error: { message: 'You have already verified this incident' } };
       }
       return { data: null, error: err };

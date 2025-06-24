@@ -13,7 +13,7 @@ import NotificationCenter from '../components/NotificationCenter';
 
 const Dashboard = () => {
   const { isAuthenticated, profile } = useAuth();
-  const { openSignUp, AuthModal } = useAuthModal();
+  const { openSignUp, openSignIn, AuthModal } = useAuthModal();
   const { incidents, loading, verifyIncidentReport, loadIncidentsNearLocation } = useIncidents();
   const { latitude, longitude, hasLocation, getCurrentLocation, error: locationError } = useLocation();
   const [showWelcome, setShowWelcome] = useState(false);
