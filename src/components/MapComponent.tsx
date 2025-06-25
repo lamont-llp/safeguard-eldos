@@ -45,6 +45,21 @@ interface MapComponentProps {
   showUserLocation?: boolean;
 }
 
+// ENHANCED: Interface for tracking event listeners to prevent memory leaks
+interface EventListenerRecord {
+  element: HTMLElement;
+  event: string;
+  handler: EventListener;
+  cleanup: () => void;
+}
+
+// ENHANCED: Interface for tracking markers with their associated cleanup functions
+interface MarkerRecord {
+  marker: maplibregl.Marker;
+  eventListeners: EventListenerRecord[];
+  cleanup: () => void;
+}
+
 const MapComponent: React.FC<MapComponentProps> = ({
   latitude = -26.3054,
   longitude = 27.9389, // Default to Eldorado Park coordinates
@@ -66,7 +81,198 @@ const MapComponent: React.FC<MapComponentProps> = ({
   const [activeLayer, setActiveLayer] = useState<'incidents' | 'routes' | 'groups'>('incidents');
   const [userLocationMarker, setUserLocationMarker] = useState<maplibregl.Marker | null>(null);
   const [selectedLocationMarker, setSelectedLocationMarker] = useState<maplibregl.Marker | null>(null);
-  const [markers, setMarkers] = useState<maplibregl.Marker[]>([]);
+
+  // ENHANCED: Use refs to track markers and event listeners for proper cleanup
+  const markersRef = useRef<MarkerRecord[]>([]);
+  const eventListenersRef = useRef<EventListenerRecord[]>([]);
+  const mapEventListenersRef = useRef<Array<{ event: string; handler: any }>>([]);
+  const isCleaningUpRef = useRef(false);
+
+  // ENHANCED: Helper function to safely add event listeners with automatic cleanup tracking
+  const addEventListenerSafely = (
+    element: HTMLElement,
+    event: string,
+    handler: EventListener,
+    options?: AddEventListenerOptions
+  ): EventListenerRecord => {
+    // Add the event listener
+    element.addEventListener(event, handler, options);
+
+    // Create cleanup function
+    const cleanup = () => {
+      try {
+        element.removeEventListener(event, handler, options);
+      } catch (error) {
+        console.warn('Error removing event listener:', error);
+      }
+    };
+
+    // Create record
+    const record: EventListenerRecord = {
+      element,
+      event,
+      handler,
+      cleanup
+    };
+
+    // Track the event listener for cleanup
+    eventListenersRef.current.push(record);
+
+    return record;
+  };
+
+  // ENHANCED: Helper function to create markers with proper event listener management
+  const createMarkerWithEventListeners = (
+    markerOptions: maplibregl.MarkerOptions,
+    lngLat: [number, number],
+    clickHandler?: (event: Event) => void,
+    additionalHandlers?: Array<{ event: string; handler: EventListener }>
+  ): MarkerRecord => {
+    // Create the marker
+    const marker = new maplibregl.Marker(markerOptions)
+      .setLngLat(lngLat)
+      .addTo(map.current!);
+
+    const eventListeners: EventListenerRecord[] = [];
+
+    // Get the marker element
+    const markerElement = marker.getElement();
+
+    // Add click handler if provided
+    if (clickHandler) {
+      const clickRecord = addEventListenerSafely(markerElement, 'click', clickHandler);
+      eventListeners.push(clickRecord);
+    }
+
+    // Add additional handlers if provided
+    if (additionalHandlers) {
+      additionalHandlers.forEach(({ event, handler }) => {
+        const record = addEventListenerSafely(markerElement, event, handler);
+        eventListeners.push(record);
+      });
+    }
+
+    // Create cleanup function for the entire marker
+    const cleanup = () => {
+      try {
+        // Clean up all event listeners first
+        eventListeners.forEach(record => {
+          record.cleanup();
+        });
+
+        // Remove the marker from the map
+        marker.remove();
+      } catch (error) {
+        console.warn('Error cleaning up marker:', error);
+      }
+    };
+
+    // Create marker record
+    const markerRecord: MarkerRecord = {
+      marker,
+      eventListeners,
+      cleanup
+    };
+
+    // Track the marker for cleanup
+    markersRef.current.push(markerRecord);
+
+    return markerRecord;
+  };
+
+  // ENHANCED: Comprehensive cleanup function for all map resources
+  const cleanupMapResources = () => {
+    if (isCleaningUpRef.current) {
+      return; // Prevent recursive cleanup
+    }
+
+    isCleaningUpRef.current = true;
+
+    console.log('🧹 Starting comprehensive map cleanup...');
+
+    try {
+      // Clean up all tracked markers and their event listeners
+      markersRef.current.forEach((markerRecord, index) => {
+        try {
+          markerRecord.cleanup();
+        } catch (error) {
+          console.warn(`Error cleaning up marker ${index}:`, error);
+        }
+      });
+      markersRef.current = [];
+
+      // Clean up standalone event listeners
+      eventListenersRef.current.forEach((record, index) => {
+        try {
+          record.cleanup();
+        } catch (error) {
+          console.warn(`Error cleaning up event listener ${index}:`, error);
+        }
+      });
+      eventListenersRef.current = [];
+
+      // Clean up map event listeners
+      if (map.current) {
+        mapEventListenersRef.current.forEach(({ event, handler }) => {
+          try {
+            map.current!.off(event, handler);
+          } catch (error) {
+            console.warn(`Error removing map event listener for ${event}:`, error);
+          }
+        });
+      }
+      mapEventListenersRef.current = [];
+
+      // Clean up special markers
+      if (userLocationMarker) {
+        try {
+          userLocationMarker.remove();
+        } catch (error) {
+          console.warn('Error removing user location marker:', error);
+        }
+        setUserLocationMarker(null);
+      }
+
+      if (selectedLocationMarker) {
+        try {
+          selectedLocationMarker.remove();
+        } catch (error) {
+          console.warn('Error removing selected location marker:', error);
+        }
+        setSelectedLocationMarker(null);
+      }
+
+      // Remove map layers and sources
+      if (map.current) {
+        try {
+          // Remove route layers
+          if (map.current.getLayer('routes')) {
+            map.current.removeLayer('routes');
+          }
+          if (map.current.getSource('routes')) {
+            map.current.removeSource('routes');
+          }
+        } catch (error) {
+          console.warn('Error removing map layers/sources:', error);
+        }
+      }
+
+      console.log('✅ Map cleanup completed successfully');
+
+    } catch (error) {
+      console.error('Error during map cleanup:', error);
+    } finally {
+      isCleaningUpRef.current = false;
+    }
+  };
+
+  // ENHANCED: Safe map event listener addition with tracking
+  const addMapEventListener = (event: string, handler: any) => {
+    if (map.current) {
+      map.current.on(event, handler);
+      mapEventListenersRef.current.push({ event, handler });
+    }
+  };
 
   // Initialize map
   useEffect(() => {
@@ -101,9 +307,9 @@ const MapComponent: React.FC<MapComponentProps> = ({
       setMapLoaded(true);
     });
 
-    // Add click handler for map
+    // ENHANCED: Add click handler for map with proper tracking
     if (onMapClick) {
-      map.current.on('click', (e) => {
+      const mapClickHandler = (e: any) => {
         onMapClick({ lngLat: { lat: e.lngLat.lat, lng: e.lngLat.lng } });
         
         // Add/update selected location marker
@@ -119,7 +325,9 @@ const MapComponent: React.FC<MapComponentProps> = ({
           .addTo(map.current!);
         
         setSelectedLocationMarker(marker);
-      });
+      };
+
+      addMapEventListener('click', mapClickHandler);
     }
 
     // Add navigation controls if interactive
@@ -128,14 +336,7 @@ const MapComponent: React.FC<MapComponentProps> = ({
     }
 
     return () => {
-      // Clean up markers
-      markers.forEach(marker => marker.remove());
-      if (userLocationMarker) {
-        userLocationMarker.remove();
-      }
-      if (selectedLocationMarker) {
-        selectedLocationMarker.remove();
-      }
+      cleanupMapResources();
       
       if (map.current) {
         map.current.remove();
@@ -181,21 +382,13 @@ const MapComponent: React.FC<MapComponentProps> = ({
     }
   }, [latitude, longitude, mapLoaded, showUserLocation]);
 
-  // Clean up existing markers
-  const cleanupMarkers = () => {
-    markers.forEach(marker => marker.remove());
-    setMarkers([]);
-  };
-
-  // Add incidents to map
+  // ENHANCED: Add incidents to map with proper event listener management
   useEffect(() => {
     if (!map.current || !mapLoaded) return;
 
-    cleanupMarkers();
+    cleanupMapResources();
 
     if (activeLayer === 'incidents') {
-      const newMarkers: maplibregl.Marker[] = [];
-      
       incidents.forEach(incident => {
         const el = document.createElement('div');
         el.className = 'incident-marker';
@@ -246,14 +439,8 @@ const MapComponent: React.FC<MapComponentProps> = ({
           el.appendChild(verifiedBadge);
         }
 
-        const marker = new maplibregl.Marker(el)
-          .setLngLat([incident.longitude, incident.latitude])
-          .addTo(map.current!);
-
-        newMarkers.push(marker);
-
-        // Add popup on click
-        el.addEventListener('click', (e) => {
+        // ENHANCED: Create marker with proper event listener management
+        const clickHandler = (e: Event) => {
           e.stopPropagation();
           if (onIncidentClick) {
             onIncidentClick(incident);
@@ -277,14 +464,18 @@ const MapComponent: React.FC<MapComponentProps> = ({
               `)
               .addTo(map.current!);
           }
-        });
+        };
+
+        createMarkerWithEventListeners(
+          { element: el },
+          [incident.longitude, incident.latitude],
+          clickHandler
+        );
       });
-      
-      setMarkers(newMarkers);
     }
   }, [incidents, mapLoaded, activeLayer, onIncidentClick]);
 
-  // Add safe routes to map
+  // ENHANCED: Add safe routes to map with proper cleanup
   useEffect(() => {
     if (!map.current || !mapLoaded) return;
 
@@ -342,9 +533,8 @@ const MapComponent: React.FC<MapComponentProps> = ({
         }
       });
 
-      // Add route markers for start/end points
-      cleanupMarkers();
-      const newMarkers: maplibregl.Marker[] = [];
+      // ENHANCED: Add route markers for start/end points with proper cleanup
+      cleanupMapResources();
 
       safeRoutes.forEach(route => {
         // Start marker
@@ -364,10 +554,6 @@ const MapComponent: React.FC<MapComponentProps> = ({
         startEl.innerHTML = 'S';
         startEl.style.cursor = 'pointer';
 
-        const startMarker = new maplibregl.Marker(startEl)
-          .setLngLat([route.start_lng, route.start_lat])
-          .addTo(map.current!);
-
         // End marker
         const endEl = document.createElement('div');
         endEl.style.width = '24px';
@@ -385,40 +571,42 @@ const MapComponent: React.FC<MapComponentProps> = ({
         endEl.innerHTML = 'E';
         endEl.style.cursor = 'pointer';
 
-        const endMarker = new maplibregl.Marker(endEl)
-          .setLngLat([route.end_lng, route.end_lat])
-          .addTo(map.current!);
-
-        newMarkers.push(startMarker, endMarker);
-
-        // Add click handlers
-        [startEl, endEl].forEach(el => {
-          el.addEventListener('click', (e) => {
-            e.stopPropagation();
-            if (onRouteClick) {
-              onRouteClick(route);
-            } else {
-              new maplibregl.Popup()
-                .setLngLat([route.start_lng, route.start_lat])
-                .setHTML(`
-                  <div class="p-3">
-                    <h3 class="font-semibold text-sm mb-2">${route.name}</h3>
-                    <div class="space-y-1 text-xs">
-                      <p class="text-gray-600">Safety Score: ${route.safety_score}/100</p>
-                      <p class="text-gray-600">Lighting: ${route.lighting_quality}</p>
-                    </div>
+        // ENHANCED: Create markers with proper event listener management
+        const routeClickHandler = (e: Event) => {
+          e.stopPropagation();
+          if (onRouteClick) {
+            onRouteClick(route);
+          } else {
+            new maplibregl.Popup()
+              .setLngLat([route.start_lng, route.start_lat])
+              .setHTML(`
+                <div class="p-3">
+                  <h3 class="font-semibold text-sm mb-2">${route.name}</h3>
+                  <div class="space-y-1 text-xs">
+                    <p class="text-gray-600">Safety Score: ${route.safety_score}/100</p>
+                    <p class="text-gray-600">Lighting: ${route.lighting_quality}</p>
                   </div>
-                `)
-                .addTo(map.current!);
-            }
-          });
-        });
+                </div>
+              `)
+              .addTo(map.current!);
+          }
+        };
+
+        createMarkerWithEventListeners(
+          { element: startEl },
+          [route.start_lng, route.start_lat],
+          routeClickHandler
+        );
+
+        createMarkerWithEventListeners(
+          { element: endEl },
+          [route.end_lng, route.end_lat],
+          routeClickHandler
+        );
       });
 
-      setMarkers(newMarkers);
-
-      // Add click handler for route lines
-      map.current.on('click', 'routes', (e) => {
+      // ENHANCED: Add click handler for route lines with proper tracking
+      const routeLineClickHandler = (e: any) => {
         if (e.features && e.features[0] && onRouteClick) {
           const feature = e.features[0];
           const route = safeRoutes.find(r => r.id === feature.properties?.id);
@@ -426,32 +614,35 @@ const MapComponent: React.FC<MapComponentProps> = ({
             onRouteClick(route);
           }
         }
-      });
+      };
 
-      // Change cursor on hover
-      map.current.on('mouseenter', 'routes', () => {
+      addMapEventListener('click', routeLineClickHandler);
+
+      // ENHANCED: Change cursor on hover with proper tracking
+      const mouseEnterHandler = () => {
         if (map.current) {
           map.current.getCanvas().style.cursor = 'pointer';
         }
-      });
+      };
 
-      map.current.on('mouseleave', 'routes', () => {
+      const mouseLeaveHandler = () => {
         if (map.current) {
           map.current.getCanvas().style.cursor = '';
         }
-      });
+      };
+
+      addMapEventListener('mouseenter', mouseEnterHandler);
+      addMapEventListener('mouseleave', mouseLeaveHandler);
     }
   }, [safeRoutes, mapLoaded, activeLayer, onRouteClick]);
 
-  // Add community groups to map
+  // ENHANCED: Add community groups to map with proper cleanup
   useEffect(() => {
     if (!map.current || !mapLoaded) return;
 
-    cleanupMarkers();
+    cleanupMapResources();
 
     if (activeLayer === 'groups') {
-      const newMarkers: maplibregl.Marker[] = [];
-      
       communityGroups.forEach(group => {
         const el = document.createElement('div');
         el.className = 'group-marker';
@@ -468,14 +659,8 @@ const MapComponent: React.FC<MapComponentProps> = ({
         el.style.fontSize = '18px';
         el.innerHTML = '👥';
 
-        const marker = new maplibregl.Marker(el)
-          .setLngLat([group.longitude, group.latitude])
-          .addTo(map.current!);
-
-        newMarkers.push(marker);
-
-        // Add popup on click
-        el.addEventListener('click', (e) => {
+        // ENHANCED: Create marker with proper event listener management
+        const groupClickHandler = (e: Event) => {
           e.stopPropagation();
           new maplibregl.Popup()
             .setLngLat([group.longitude, group.latitude])
@@ -489,10 +674,14 @@ const MapComponent: React.FC<MapComponentProps> = ({
               </div>
             `)
             .addTo(map.current!);
-        });
+        };
+
+        createMarkerWithEventListeners(
+          { element: el },
+          [group.longitude, group.latitude],
+          groupClickHandler
+        );
       });
-      
-      setMarkers(newMarkers);
     }
   }, [communityGroups, mapLoaded, activeLayer]);
 
@@ -592,7 +781,7 @@ const MapComponent: React.FC<MapComponentProps> = ({
               </div>
               <div className="flex items-center space-x-2">
                 <div className="w-4 h-1 bg-red-500"></div>
-                <span className="text-xs text-gray-600">Caution (&lt;50)</span>
+                <span className="text-xs text-gray-600">Caution (<50)</span>
               </div>
               <div className="flex items-center space-x-2">
                 <div className="w-3 h-3 rounded-full bg-green-500 text-white text-xs flex items-center justify-center">S</div>
