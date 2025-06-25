@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { MapPin, Layers, Navigation, Zap, AlertTriangle, Shield, Users, Crosshair } from 'lucide-react';
@@ -60,6 +60,15 @@ interface MarkerRecord {
   cleanup: () => void;
 }
 
+// FIXED: Consolidated marker state interface to prevent race conditions
+interface MarkerState {
+  incidents: MarkerRecord[];
+  routes: MarkerRecord[];
+  groups: MarkerRecord[];
+  userLocation: maplibregl.Marker | null;
+  selectedLocation: maplibregl.Marker | null;
+}
+
 const MapComponent: React.FC<MapComponentProps> = ({
   latitude = -26.3054,
   longitude = 27.9389, // Default to Eldorado Park coordinates
@@ -79,17 +88,24 @@ const MapComponent: React.FC<MapComponentProps> = ({
   const map = useRef<maplibregl.Map | null>(null);
   const [mapLoaded, setMapLoaded] = useState(false);
   const [activeLayer, setActiveLayer] = useState<'incidents' | 'routes' | 'groups'>('incidents');
-  const [userLocationMarker, setUserLocationMarker] = useState<maplibregl.Marker | null>(null);
-  const [selectedLocationMarker, setSelectedLocationMarker] = useState<maplibregl.Marker | null>(null);
 
-  // ENHANCED: Use refs to track markers and event listeners for proper cleanup
-  const markersRef = useRef<MarkerRecord[]>([]);
+  // FIXED: Consolidated marker state to prevent race conditions
+  const [markerState, setMarkerState] = useState<MarkerState>({
+    incidents: [],
+    routes: [],
+    groups: [],
+    userLocation: null,
+    selectedLocation: null
+  });
+
+  // ENHANCED: Use refs to track cleanup state and prevent memory leaks
   const eventListenersRef = useRef<EventListenerRecord[]>([]);
   const mapEventListenersRef = useRef<Array<{ event: string; handler: any }>>([]);
   const isCleaningUpRef = useRef(false);
+  const updateInProgressRef = useRef(false);
 
   // ENHANCED: Helper function to safely add event listeners with automatic cleanup tracking
-  const addEventListenerSafely = (
+  const addEventListenerSafely = useCallback((
     element: HTMLElement,
     event: string,
     handler: EventListener,
@@ -119,10 +135,10 @@ const MapComponent: React.FC<MapComponentProps> = ({
     eventListenersRef.current.push(record);
 
     return record;
-  };
+  }, []);
 
   // ENHANCED: Helper function to create markers with proper event listener management
-  const createMarkerWithEventListeners = (
+  const createMarkerWithEventListeners = useCallback((
     markerOptions: maplibregl.MarkerOptions,
     lngLat: [number, number],
     clickHandler?: (event: Event) => void,
@@ -174,14 +190,11 @@ const MapComponent: React.FC<MapComponentProps> = ({
       cleanup
     };
 
-    // Track the marker for cleanup
-    markersRef.current.push(markerRecord);
-
     return markerRecord;
-  };
+  }, [addEventListenerSafely]);
 
   // ENHANCED: Comprehensive cleanup function for all map resources
-  const cleanupMapResources = () => {
+  const cleanupMapResources = useCallback(() => {
     if (isCleaningUpRef.current) {
       return; // Prevent recursive cleanup
     }
@@ -191,15 +204,24 @@ const MapComponent: React.FC<MapComponentProps> = ({
     console.log('🧹 Starting comprehensive map cleanup...');
 
     try {
-      // Clean up all tracked markers and their event listeners
-      markersRef.current.forEach((markerRecord, index) => {
-        try {
-          markerRecord.cleanup();
-        } catch (error) {
-          console.warn(`Error cleaning up marker ${index}:`, error);
+      // Clean up all markers in state
+      Object.values(markerState).forEach(markers => {
+        if (Array.isArray(markers)) {
+          markers.forEach((markerRecord, index) => {
+            try {
+              markerRecord.cleanup();
+            } catch (error) {
+              console.warn(`Error cleaning up marker ${index}:`, error);
+            }
+          });
+        } else if (markers && typeof markers.remove === 'function') {
+          try {
+            markers.remove();
+          } catch (error) {
+            console.warn('Error removing special marker:', error);
+          }
         }
       });
-      markersRef.current = [];
 
       // Clean up standalone event listeners
       eventListenersRef.current.forEach((record, index) => {
@@ -223,25 +245,6 @@ const MapComponent: React.FC<MapComponentProps> = ({
       }
       mapEventListenersRef.current = [];
 
-      // Clean up special markers
-      if (userLocationMarker) {
-        try {
-          userLocationMarker.remove();
-        } catch (error) {
-          console.warn('Error removing user location marker:', error);
-        }
-        setUserLocationMarker(null);
-      }
-
-      if (selectedLocationMarker) {
-        try {
-          selectedLocationMarker.remove();
-        } catch (error) {
-          console.warn('Error removing selected location marker:', error);
-        }
-        setSelectedLocationMarker(null);
-      }
-
       // Remove map layers and sources
       if (map.current) {
         try {
@@ -257,6 +260,15 @@ const MapComponent: React.FC<MapComponentProps> = ({
         }
       }
 
+      // Reset marker state
+      setMarkerState({
+        incidents: [],
+        routes: [],
+        groups: [],
+        userLocation: null,
+        selectedLocation: null
+      });
+
       console.log('✅ Map cleanup completed successfully');
 
     } catch (error) {
@@ -264,15 +276,28 @@ const MapComponent: React.FC<MapComponentProps> = ({
     } finally {
       isCleaningUpRef.current = false;
     }
-  };
+  }, [markerState]);
 
   // ENHANCED: Safe map event listener addition with tracking
-  const addMapEventListener = (event: string, handler: any) => {
+  const addMapEventListener = useCallback((event: string, handler: any) => {
     if (map.current) {
       map.current.on(event, handler);
       mapEventListenersRef.current.push({ event, handler });
     }
-  };
+  }, []);
+
+  // FIXED: Memoized data dependencies to prevent unnecessary re-renders
+  const dataHash = useMemo(() => {
+    return JSON.stringify({
+      incidents: incidents.map(i => ({ id: i.id, lat: i.latitude, lng: i.longitude })),
+      routes: safeRoutes.map(r => ({ id: r.id, start_lat: r.start_lat, start_lng: r.start_lng })),
+      groups: communityGroups.map(g => ({ id: g.id, lat: g.latitude, lng: g.longitude })),
+      activeLayer,
+      userLat: latitude,
+      userLng: longitude,
+      showUserLocation
+    });
+  }, [incidents, safeRoutes, communityGroups, activeLayer, latitude, longitude, showUserLocation]);
 
   // Initialize map
   useEffect(() => {
@@ -313,18 +338,24 @@ const MapComponent: React.FC<MapComponentProps> = ({
         onMapClick({ lngLat: { lat: e.lngLat.lat, lng: e.lngLat.lng } });
         
         // Add/update selected location marker
-        if (selectedLocationMarker) {
-          selectedLocationMarker.remove();
-        }
-        
-        const marker = new maplibregl.Marker({
-          color: '#DC2626',
-          scale: 1.2
-        })
-          .setLngLat([e.lngLat.lng, e.lngLat.lat])
-          .addTo(map.current!);
-        
-        setSelectedLocationMarker(marker);
+        setMarkerState(prev => {
+          // Clean up previous selected location marker
+          if (prev.selectedLocation) {
+            prev.selectedLocation.remove();
+          }
+          
+          const marker = new maplibregl.Marker({
+            color: '#DC2626',
+            scale: 1.2
+          })
+            .setLngLat([e.lngLat.lng, e.lngLat.lat])
+            .addTo(map.current!);
+          
+          return {
+            ...prev,
+            selectedLocation: marker
+          };
+        });
       };
 
       addMapEventListener('click', mapClickHandler);
@@ -345,345 +376,340 @@ const MapComponent: React.FC<MapComponentProps> = ({
     };
   }, []);
 
-  // Update map center when coordinates change
+  // FIXED: Single consolidated effect for all marker updates to prevent race conditions
   useEffect(() => {
-    if (map.current && latitude && longitude) {
-      map.current.setCenter([longitude, latitude]);
-      
-      // Add or update user location marker
-      if (showUserLocation) {
-        if (userLocationMarker) {
-          userLocationMarker.remove();
-        }
-        
-        // Create custom user location marker
-        const el = document.createElement('div');
-        el.className = 'user-location-marker';
-        el.style.width = '20px';
-        el.style.height = '20px';
-        el.style.borderRadius = '50%';
-        el.style.backgroundColor = '#3B82F6';
-        el.style.border = '3px solid white';
-        el.style.boxShadow = '0 2px 4px rgba(0,0,0,0.3)';
-        el.style.display = 'flex';
-        el.style.alignItems = 'center';
-        el.style.justifyContent = 'center';
-        el.innerHTML = '•';
-        el.style.color = 'white';
-        el.style.fontSize = '12px';
-        el.style.fontWeight = 'bold';
-        
-        const marker = new maplibregl.Marker(el)
-          .setLngLat([longitude, latitude])
-          .addTo(map.current);
-        
-        setUserLocationMarker(marker);
-      }
-    }
-  }, [latitude, longitude, mapLoaded, showUserLocation]);
+    if (!map.current || !mapLoaded || updateInProgressRef.current) return;
 
-  // ENHANCED: Add incidents to map with proper event listener management
-  useEffect(() => {
-    if (!map.current || !mapLoaded) return;
+    updateInProgressRef.current = true;
 
-    cleanupMapResources();
+    const updateMarkers = async () => {
+      try {
+        console.log('🔄 Starting marker update...');
 
-    if (activeLayer === 'incidents') {
-      incidents.forEach(incident => {
-        const el = document.createElement('div');
-        el.className = 'incident-marker';
-        el.style.width = '28px';
-        el.style.height = '28px';
-        el.style.borderRadius = '50%';
-        el.style.cursor = 'pointer';
-        el.style.border = '3px solid white';
-        el.style.boxShadow = '0 2px 6px rgba(0,0,0,0.3)';
-        el.style.display = 'flex';
-        el.style.alignItems = 'center';
-        el.style.justifyContent = 'center';
-        el.style.fontSize = '12px';
-        el.style.fontWeight = 'bold';
-        el.style.color = 'white';
-        
-        // Color based on severity and urgency
-        if (incident.is_urgent) {
-          el.style.backgroundColor = '#DC2626'; // Red for urgent
-          el.style.animation = 'pulse 2s infinite';
-          el.innerHTML = '🚨';
-        } else if (incident.severity === 'high' || incident.severity === 'critical') {
-          el.style.backgroundColor = '#F59E0B'; // Orange for high
-          el.innerHTML = '⚠️';
-        } else {
-          el.style.backgroundColor = '#10B981'; // Green for low/medium
-          el.innerHTML = '📍';
-        }
-
-        // Add verification indicator
-        if (incident.is_verified) {
-          el.style.border = '3px solid #059669';
-          const verifiedBadge = document.createElement('div');
-          verifiedBadge.style.position = 'absolute';
-          verifiedBadge.style.top = '-2px';
-          verifiedBadge.style.right = '-2px';
-          verifiedBadge.style.width = '12px';
-          verifiedBadge.style.height = '12px';
-          verifiedBadge.style.backgroundColor = '#059669';
-          verifiedBadge.style.borderRadius = '50%';
-          verifiedBadge.style.display = 'flex';
-          verifiedBadge.style.alignItems = 'center';
-          verifiedBadge.style.justifyContent = 'center';
-          verifiedBadge.style.fontSize = '8px';
-          verifiedBadge.style.color = 'white';
-          verifiedBadge.innerHTML = '✓';
-          el.style.position = 'relative';
-          el.appendChild(verifiedBadge);
-        }
-
-        // ENHANCED: Create marker with proper event listener management
-        const clickHandler = (e: Event) => {
-          e.stopPropagation();
-          if (onIncidentClick) {
-            onIncidentClick(incident);
-          } else {
-            new maplibregl.Popup({
-              closeButton: true,
-              closeOnClick: false
-            })
-              .setLngLat([incident.longitude, incident.latitude])
-              .setHTML(`
-                <div class="p-3 max-w-xs">
-                  <h3 class="font-semibold text-sm mb-2">${incident.title}</h3>
-                  <div class="space-y-1 text-xs">
-                    <p class="text-gray-600">Type: ${incident.incident_type.replace('_', ' ')}</p>
-                    <p class="text-gray-600">Severity: ${incident.severity}</p>
-                    <p class="text-gray-500">${new Date(incident.created_at).toLocaleDateString()}</p>
-                    ${incident.is_verified ? '<span class="inline-block bg-green-100 text-green-800 px-2 py-1 rounded text-xs">✓ Verified</span>' : ''}
-                    ${incident.is_urgent ? '<span class="inline-block bg-red-100 text-red-800 px-2 py-1 rounded text-xs">🚨 Urgent</span>' : ''}
-                  </div>
-                </div>
-              `)
-              .addTo(map.current!);
+        // Clean up existing markers first
+        Object.values(markerState).forEach(markers => {
+          if (Array.isArray(markers)) {
+            markers.forEach(markerRecord => {
+              try {
+                markerRecord.cleanup();
+              } catch (error) {
+                console.warn('Error cleaning up existing marker:', error);
+              }
+            });
           }
+        });
+
+        const newMarkerState: MarkerState = {
+          incidents: [],
+          routes: [],
+          groups: [],
+          userLocation: markerState.userLocation,
+          selectedLocation: markerState.selectedLocation
         };
 
-        createMarkerWithEventListeners(
-          { element: el },
-          [incident.longitude, incident.latitude],
-          clickHandler
-        );
-      });
-    }
-  }, [incidents, mapLoaded, activeLayer, onIncidentClick]);
-
-  // ENHANCED: Add safe routes to map with proper cleanup
-  useEffect(() => {
-    if (!map.current || !mapLoaded) return;
-
-    // Remove existing route layers
-    if (map.current.getLayer('routes')) {
-      map.current.removeLayer('routes');
-    }
-    if (map.current.getSource('routes')) {
-      map.current.removeSource('routes');
-    }
-
-    if (activeLayer === 'routes' && safeRoutes.length > 0) {
-      const routeFeatures = safeRoutes.map(route => ({
-        type: 'Feature',
-        properties: {
-          id: route.id,
-          name: route.name,
-          safety_score: route.safety_score,
-          lighting_quality: route.lighting_quality
-        },
-        geometry: {
-          type: 'LineString',
-          coordinates: [
-            [route.start_lng, route.start_lat],
-            [route.end_lng, route.end_lat]
-          ]
-        }
-      }));
-
-      map.current.addSource('routes', {
-        type: 'geojson',
-        data: {
-          type: 'FeatureCollection',
-          features: routeFeatures
-        }
-      });
-
-      map.current.addLayer({
-        id: 'routes',
-        type: 'line',
-        source: 'routes',
-        layout: {
-          'line-join': 'round',
-          'line-cap': 'round'
-        },
-        paint: {
-          'line-color': [
-            'case',
-            ['>=', ['get', 'safety_score'], 75], '#10B981', // Green for safe
-            ['>=', ['get', 'safety_score'], 50], '#F59E0B', // Orange for moderate
-            '#DC2626' // Red for unsafe
-          ],
-          'line-width': 5,
-          'line-opacity': 0.8
-        }
-      });
-
-      // ENHANCED: Add route markers for start/end points with proper cleanup
-      cleanupMapResources();
-
-      safeRoutes.forEach(route => {
-        // Start marker
-        const startEl = document.createElement('div');
-        startEl.style.width = '24px';
-        startEl.style.height = '24px';
-        startEl.style.borderRadius = '50%';
-        startEl.style.backgroundColor = '#10B981';
-        startEl.style.border = '3px solid white';
-        startEl.style.boxShadow = '0 2px 4px rgba(0,0,0,0.3)';
-        startEl.style.display = 'flex';
-        startEl.style.alignItems = 'center';
-        startEl.style.justifyContent = 'center';
-        startEl.style.color = 'white';
-        startEl.style.fontSize = '12px';
-        startEl.style.fontWeight = 'bold';
-        startEl.innerHTML = 'S';
-        startEl.style.cursor = 'pointer';
-
-        // End marker
-        const endEl = document.createElement('div');
-        endEl.style.width = '24px';
-        endEl.style.height = '24px';
-        endEl.style.borderRadius = '50%';
-        endEl.style.backgroundColor = '#DC2626';
-        endEl.style.border = '3px solid white';
-        endEl.style.boxShadow = '0 2px 4px rgba(0,0,0,0.3)';
-        endEl.style.display = 'flex';
-        endEl.style.alignItems = 'center';
-        endEl.style.justifyContent = 'center';
-        endEl.style.color = 'white';
-        endEl.style.fontSize = '12px';
-        endEl.style.fontWeight = 'bold';
-        endEl.innerHTML = 'E';
-        endEl.style.cursor = 'pointer';
-
-        // ENHANCED: Create markers with proper event listener management
-        const routeClickHandler = (e: Event) => {
-          e.stopPropagation();
-          if (onRouteClick) {
-            onRouteClick(route);
-          } else {
-            new maplibregl.Popup()
-              .setLngLat([route.start_lng, route.start_lat])
-              .setHTML(`
-                <div class="p-3">
-                  <h3 class="font-semibold text-sm mb-2">${route.name}</h3>
-                  <div class="space-y-1 text-xs">
-                    <p class="text-gray-600">Safety Score: ${route.safety_score}/100</p>
-                    <p class="text-gray-600">Lighting: ${route.lighting_quality}</p>
-                  </div>
-                </div>
-              `)
-              .addTo(map.current!);
+        // Update user location marker
+        if (showUserLocation && latitude && longitude) {
+          if (markerState.userLocation) {
+            markerState.userLocation.remove();
           }
-        };
-
-        createMarkerWithEventListeners(
-          { element: startEl },
-          [route.start_lng, route.start_lat],
-          routeClickHandler
-        );
-
-        createMarkerWithEventListeners(
-          { element: endEl },
-          [route.end_lng, route.end_lat],
-          routeClickHandler
-        );
-      });
-
-      // ENHANCED: Add click handler for route lines with proper tracking
-      const routeLineClickHandler = (e: any) => {
-        if (e.features && e.features[0] && onRouteClick) {
-          const feature = e.features[0];
-          const route = safeRoutes.find(r => r.id === feature.properties?.id);
-          if (route) {
-            onRouteClick(route);
-          }
-        }
-      };
-
-      addMapEventListener('click', routeLineClickHandler);
-
-      // ENHANCED: Change cursor on hover with proper tracking
-      const mouseEnterHandler = () => {
-        if (map.current) {
-          map.current.getCanvas().style.cursor = 'pointer';
-        }
-      };
-
-      const mouseLeaveHandler = () => {
-        if (map.current) {
-          map.current.getCanvas().style.cursor = '';
-        }
-      };
-
-      addMapEventListener('mouseenter', mouseEnterHandler);
-      addMapEventListener('mouseleave', mouseLeaveHandler);
-    }
-  }, [safeRoutes, mapLoaded, activeLayer, onRouteClick]);
-
-  // ENHANCED: Add community groups to map with proper cleanup
-  useEffect(() => {
-    if (!map.current || !mapLoaded) return;
-
-    cleanupMapResources();
-
-    if (activeLayer === 'groups') {
-      communityGroups.forEach(group => {
-        const el = document.createElement('div');
-        el.className = 'group-marker';
-        el.style.width = '36px';
-        el.style.height = '36px';
-        el.style.borderRadius = '50%';
-        el.style.cursor = 'pointer';
-        el.style.border = '3px solid white';
-        el.style.boxShadow = '0 2px 6px rgba(0,0,0,0.3)';
-        el.style.backgroundColor = '#8B5CF6'; // Purple for groups
-        el.style.display = 'flex';
-        el.style.alignItems = 'center';
-        el.style.justifyContent = 'center';
-        el.style.fontSize = '18px';
-        el.innerHTML = '👥';
-
-        // ENHANCED: Create marker with proper event listener management
-        const groupClickHandler = (e: Event) => {
-          e.stopPropagation();
-          new maplibregl.Popup()
-            .setLngLat([group.longitude, group.latitude])
-            .setHTML(`
-              <div class="p-3">
-                <h3 class="font-semibold text-sm mb-2">${group.name}</h3>
-                <div class="space-y-1 text-xs">
-                  <p class="text-gray-600">Type: ${group.group_type.replace('_', ' ')}</p>
-                  <p class="text-gray-600">Members: ${group.member_count}</p>
-                </div>
-              </div>
-            `)
+          
+          // Create custom user location marker
+          const el = document.createElement('div');
+          el.className = 'user-location-marker';
+          el.style.width = '20px';
+          el.style.height = '20px';
+          el.style.borderRadius = '50%';
+          el.style.backgroundColor = '#3B82F6';
+          el.style.border = '3px solid white';
+          el.style.boxShadow = '0 2px 4px rgba(0,0,0,0.3)';
+          el.style.display = 'flex';
+          el.style.alignItems = 'center';
+          el.style.justifyContent = 'center';
+          el.innerHTML = '•';
+          el.style.color = 'white';
+          el.style.fontSize = '12px';
+          el.style.fontWeight = 'bold';
+          
+          const marker = new maplibregl.Marker(el)
+            .setLngLat([longitude, latitude])
             .addTo(map.current!);
-        };
+          
+          newMarkerState.userLocation = marker;
+        }
 
-        createMarkerWithEventListeners(
-          { element: el },
-          [group.longitude, group.latitude],
-          groupClickHandler
-        );
-      });
-    }
-  }, [communityGroups, mapLoaded, activeLayer]);
+        // Add markers based on active layer
+        if (activeLayer === 'incidents') {
+          newMarkerState.incidents = incidents.map(incident => {
+            const el = document.createElement('div');
+            el.className = 'incident-marker';
+            el.style.width = '28px';
+            el.style.height = '28px';
+            el.style.borderRadius = '50%';
+            el.style.cursor = 'pointer';
+            el.style.border = '3px solid white';
+            el.style.boxShadow = '0 2px 6px rgba(0,0,0,0.3)';
+            el.style.display = 'flex';
+            el.style.alignItems = 'center';
+            el.style.justifyContent = 'center';
+            el.style.fontSize = '12px';
+            el.style.fontWeight = 'bold';
+            el.style.color = 'white';
+            
+            // Color based on severity and urgency
+            if (incident.is_urgent) {
+              el.style.backgroundColor = '#DC2626'; // Red for urgent
+              el.style.animation = 'pulse 2s infinite';
+              el.innerHTML = '🚨';
+            } else if (incident.severity === 'high' || incident.severity === 'critical') {
+              el.style.backgroundColor = '#F59E0B'; // Orange for high
+              el.innerHTML = '⚠️';
+            } else {
+              el.style.backgroundColor = '#10B981'; // Green for low/medium
+              el.innerHTML = '📍';
+            }
+
+            // Add verification indicator
+            if (incident.is_verified) {
+              el.style.border = '3px solid #059669';
+              const verifiedBadge = document.createElement('div');
+              verifiedBadge.style.position = 'absolute';
+              verifiedBadge.style.top = '-2px';
+              verifiedBadge.style.right = '-2px';
+              verifiedBadge.style.width = '12px';
+              verifiedBadge.style.height = '12px';
+              verifiedBadge.style.backgroundColor = '#059669';
+              verifiedBadge.style.borderRadius = '50%';
+              verifiedBadge.style.display = 'flex';
+              verifiedBadge.style.alignItems = 'center';
+              verifiedBadge.style.justifyContent = 'center';
+              verifiedBadge.style.fontSize = '8px';
+              verifiedBadge.style.color = 'white';
+              verifiedBadge.innerHTML = '✓';
+              el.style.position = 'relative';
+              el.appendChild(verifiedBadge);
+            }
+
+            const clickHandler = (e: Event) => {
+              e.stopPropagation();
+              if (onIncidentClick) {
+                onIncidentClick(incident);
+              } else {
+                new maplibregl.Popup({
+                  closeButton: true,
+                  closeOnClick: false
+                })
+                  .setLngLat([incident.longitude, incident.latitude])
+                  .setHTML(`
+                    <div class="p-3 max-w-xs">
+                      <h3 class="font-semibold text-sm mb-2">${incident.title}</h3>
+                      <div class="space-y-1 text-xs">
+                        <p class="text-gray-600">Type: ${incident.incident_type.replace('_', ' ')}</p>
+                        <p class="text-gray-600">Severity: ${incident.severity}</p>
+                        <p class="text-gray-500">${new Date(incident.created_at).toLocaleDateString()}</p>
+                        ${incident.is_verified ? '<span class="inline-block bg-green-100 text-green-800 px-2 py-1 rounded text-xs">✓ Verified</span>' : ''}
+                        ${incident.is_urgent ? '<span class="inline-block bg-red-100 text-red-800 px-2 py-1 rounded text-xs">🚨 Urgent</span>' : ''}
+                      </div>
+                    </div>
+                  `)
+                  .addTo(map.current!);
+              }
+            };
+
+            return createMarkerWithEventListeners(
+              { element: el },
+              [incident.longitude, incident.latitude],
+              clickHandler
+            );
+          });
+        }
+
+        if (activeLayer === 'routes' && safeRoutes.length > 0) {
+          // Handle route layers
+          if (map.current!.getLayer('routes')) {
+            map.current!.removeLayer('routes');
+          }
+          if (map.current!.getSource('routes')) {
+            map.current!.removeSource('routes');
+          }
+
+          const routeFeatures = safeRoutes.map(route => ({
+            type: 'Feature',
+            properties: {
+              id: route.id,
+              name: route.name,
+              safety_score: route.safety_score,
+              lighting_quality: route.lighting_quality
+            },
+            geometry: {
+              type: 'LineString',
+              coordinates: [
+                [route.start_lng, route.start_lat],
+                [route.end_lng, route.end_lat]
+              ]
+            }
+          }));
+
+          map.current!.addSource('routes', {
+            type: 'geojson',
+            data: {
+              type: 'FeatureCollection',
+              features: routeFeatures
+            }
+          });
+
+          map.current!.addLayer({
+            id: 'routes',
+            type: 'line',
+            source: 'routes',
+            layout: {
+              'line-join': 'round',
+              'line-cap': 'round'
+            },
+            paint: {
+              'line-color': [
+                'case',
+                ['>=', ['get', 'safety_score'], 75], '#10B981', // Green for safe
+                ['>=', ['get', 'safety_score'], 50], '#F59E0B', // Orange for moderate
+                '#DC2626' // Red for unsafe
+              ],
+              'line-width': 5,
+              'line-opacity': 0.8
+            }
+          });
+
+          // Add route markers
+          newMarkerState.routes = safeRoutes.flatMap(route => {
+            const markers: MarkerRecord[] = [];
+
+            // Start marker
+            const startEl = document.createElement('div');
+            startEl.style.width = '24px';
+            startEl.style.height = '24px';
+            startEl.style.borderRadius = '50%';
+            startEl.style.backgroundColor = '#10B981';
+            startEl.style.border = '3px solid white';
+            startEl.style.boxShadow = '0 2px 4px rgba(0,0,0,0.3)';
+            startEl.style.display = 'flex';
+            startEl.style.alignItems = 'center';
+            startEl.style.justifyContent = 'center';
+            startEl.style.color = 'white';
+            startEl.style.fontSize = '12px';
+            startEl.style.fontWeight = 'bold';
+            startEl.innerHTML = 'S';
+            startEl.style.cursor = 'pointer';
+
+            // End marker
+            const endEl = document.createElement('div');
+            endEl.style.width = '24px';
+            endEl.style.height = '24px';
+            endEl.style.borderRadius = '50%';
+            endEl.style.backgroundColor = '#DC2626';
+            endEl.style.border = '3px solid white';
+            endEl.style.boxShadow = '0 2px 4px rgba(0,0,0,0.3)';
+            endEl.style.display = 'flex';
+            endEl.style.alignItems = 'center';
+            endEl.style.justifyContent = 'center';
+            endEl.style.color = 'white';
+            endEl.style.fontSize = '12px';
+            endEl.style.fontWeight = 'bold';
+            endEl.innerHTML = 'E';
+            endEl.style.cursor = 'pointer';
+
+            const routeClickHandler = (e: Event) => {
+              e.stopPropagation();
+              if (onRouteClick) {
+                onRouteClick(route);
+              } else {
+                new maplibregl.Popup()
+                  .setLngLat([route.start_lng, route.start_lat])
+                  .setHTML(`
+                    <div class="p-3">
+                      <h3 class="font-semibold text-sm mb-2">${route.name}</h3>
+                      <div class="space-y-1 text-xs">
+                        <p class="text-gray-600">Safety Score: ${route.safety_score}/100</p>
+                        <p class="text-gray-600">Lighting: ${route.lighting_quality}</p>
+                      </div>
+                    </div>
+                  `)
+                  .addTo(map.current!);
+              }
+            };
+
+            markers.push(
+              createMarkerWithEventListeners(
+                { element: startEl },
+                [route.start_lng, route.start_lat],
+                routeClickHandler
+              )
+            );
+
+            markers.push(
+              createMarkerWithEventListeners(
+                { element: endEl },
+                [route.end_lng, route.end_lat],
+                routeClickHandler
+              )
+            );
+
+            return markers;
+          });
+        }
+
+        if (activeLayer === 'groups') {
+          newMarkerState.groups = communityGroups.map(group => {
+            const el = document.createElement('div');
+            el.className = 'group-marker';
+            el.style.width = '36px';
+            el.style.height = '36px';
+            el.style.borderRadius = '50%';
+            el.style.cursor = 'pointer';
+            el.style.border = '3px solid white';
+            el.style.boxShadow = '0 2px 6px rgba(0,0,0,0.3)';
+            el.style.backgroundColor = '#8B5CF6'; // Purple for groups
+            el.style.display = 'flex';
+            el.style.alignItems = 'center';
+            el.style.justifyContent = 'center';
+            el.style.fontSize = '18px';
+            el.innerHTML = '👥';
+
+            const groupClickHandler = (e: Event) => {
+              e.stopPropagation();
+              new maplibregl.Popup()
+                .setLngLat([group.longitude, group.latitude])
+                .setHTML(`
+                  <div class="p-3">
+                    <h3 class="font-semibold text-sm mb-2">${group.name}</h3>
+                    <div class="space-y-1 text-xs">
+                      <p class="text-gray-600">Type: ${group.group_type.replace('_', ' ')}</p>
+                      <p class="text-gray-600">Members: ${group.member_count}</p>
+                    </div>
+                  </div>
+                `)
+                .addTo(map.current!);
+            };
+
+            return createMarkerWithEventListeners(
+              { element: el },
+              [group.longitude, group.latitude],
+              groupClickHandler
+            );
+          });
+        }
+
+        // Update state with new markers
+        setMarkerState(newMarkerState);
+
+        console.log('✅ Marker update completed successfully');
+
+      } catch (error) {
+        console.error('Error updating markers:', error);
+      } finally {
+        updateInProgressRef.current = false;
+      }
+    };
+
+    updateMarkers();
+  }, [dataHash, mapLoaded]); // FIXED: Use memoized dataHash to prevent unnecessary updates
 
   const getLayerIcon = (layer: string) => {
     switch (layer) {
