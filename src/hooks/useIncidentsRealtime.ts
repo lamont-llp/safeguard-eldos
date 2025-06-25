@@ -123,6 +123,121 @@ export const useIncidentsRealtime = () => {
     return fallback;
   }, [extractCoordinatesFromPoint, getFallbackCoordinates]);
 
+  // FIXED: Safe browser notification with comprehensive error handling
+  const showSafeBrowserNotification = useCallback((title: string, options: NotificationOptions) => {
+    // Check if notifications are supported
+    if (!('Notification' in window)) {
+      console.warn('Browser notifications not supported');
+      return false;
+    }
+
+    // Check current permission status
+    if (Notification.permission !== 'granted') {
+      console.warn('Notification permission not granted:', Notification.permission);
+      return false;
+    }
+
+    try {
+      // Validate notification options
+      const safeOptions: NotificationOptions = {
+        ...options,
+        // Ensure icon and badge are valid URLs
+        icon: options.icon || '/shield.svg',
+        badge: options.badge || '/shield.svg',
+        // Ensure tag is a string
+        tag: typeof options.tag === 'string' ? options.tag : 'safeguard-notification',
+        // Ensure data is serializable
+        data: options.data ? JSON.parse(JSON.stringify(options.data)) : undefined
+      };
+
+      // Create notification with error handling
+      const notification = new Notification(title, safeOptions);
+
+      // Handle notification events
+      notification.onshow = () => {
+        console.log('Browser notification shown successfully');
+      };
+
+      notification.onerror = (event) => {
+        console.error('Browser notification error:', event);
+      };
+
+      notification.onclose = () => {
+        console.log('Browser notification closed');
+      };
+
+      notification.onclick = () => {
+        try {
+          window.focus();
+          if (options.data?.actionUrl) {
+            window.location.href = options.data.actionUrl;
+          }
+          notification.close();
+        } catch (error) {
+          console.error('Error handling notification click:', error);
+        }
+      };
+
+      // Auto-close non-urgent notifications
+      if (!safeOptions.requireInteraction) {
+        setTimeout(() => {
+          try {
+            notification.close();
+          } catch (error) {
+            console.warn('Error auto-closing notification:', error);
+          }
+        }, 5000);
+      }
+
+      return true;
+
+    } catch (error) {
+      console.error('Failed to create browser notification:', error);
+      
+      // Log specific error types for debugging
+      if (error instanceof TypeError) {
+        console.error('Notification TypeError - likely invalid options:', error.message);
+      } else if (error instanceof DOMException) {
+        console.error('Notification DOMException - browser restriction:', error.message);
+      } else {
+        console.error('Unknown notification error:', error);
+      }
+
+      // Attempt to request permission again if it was denied
+      if (Notification.permission === 'denied') {
+        console.warn('Notification permission denied - cannot show browser notifications');
+      } else if (Notification.permission === 'default') {
+        console.log('Notification permission not requested - attempting to request');
+        Notification.requestPermission().then(permission => {
+          console.log('Notification permission request result:', permission);
+        }).catch(permissionError => {
+          console.error('Failed to request notification permission:', permissionError);
+        });
+      }
+
+      return false;
+    }
+  }, []);
+
+  // FIXED: Enhanced vibration with error handling
+  const safeVibrate = useCallback((pattern: number | number[]) => {
+    try {
+      if ('vibrate' in navigator && typeof navigator.vibrate === 'function') {
+        const success = navigator.vibrate(pattern);
+        if (!success) {
+          console.warn('Vibration request failed or was ignored');
+        }
+        return success;
+      } else {
+        console.warn('Vibration API not supported');
+        return false;
+      }
+    } catch (error) {
+      console.error('Error triggering vibration:', error);
+      return false;
+    }
+  }, []);
+
   // FIXED: Stabilize notification handler to prevent subscription recreation
   const handleIncidentNotification = useCallback((payload: any) => {
     if (payload.eventType === 'INSERT') {
@@ -206,7 +321,7 @@ export const useIncidentsRealtime = () => {
     }
   }, [addIncident, updateIncident, removeIncident, showNotification, getIncidentCoordinates]);
 
-  // FIXED: Stabilize safety alert handler to prevent subscription recreation
+  // FIXED: Stabilize safety alert handler with enhanced error handling
   const handleSafetyAlert = useCallback((payload: any) => {
     if (payload.eventType === 'INSERT' && payload.new.is_urgent) {
       const incident = payload.new;
@@ -214,7 +329,7 @@ export const useIncidentsRealtime = () => {
       // FIXED: Get actual incident coordinates for urgent alerts
       const incidentCoords = getIncidentCoordinates(incident);
       
-      // Show urgent notification
+      // Show urgent notification through notification service
       showNotification({
         type: 'safety_alert',
         title: '🚨 URGENT SAFETY ALERT',
@@ -233,23 +348,37 @@ export const useIncidentsRealtime = () => {
         }
       });
 
-      // Also show browser notification immediately if permission granted
-      if ('Notification' in window && Notification.permission === 'granted') {
-        new Notification('🚨 SafeGuard Eldos - URGENT ALERT', {
-          body: `${incident.title} - ${incident.location_address}`,
-          icon: '/shield.svg',
-          tag: 'urgent-alert',
-          requireInteraction: true,
-          vibrate: [200, 100, 200, 100, 200],
-          data: {
-            incidentId: incident.id,
-            coordinates: incidentCoords,
-            timestamp: new Date().toISOString()
-          }
-        });
+      // FIXED: Safe browser notification with comprehensive error handling
+      const notificationSuccess = showSafeBrowserNotification('🚨 SafeGuard Eldos - URGENT ALERT', {
+        body: `${incident.title} - ${incident.location_address}`,
+        icon: '/shield.svg',
+        badge: '/shield.svg',
+        tag: 'urgent-alert',
+        requireInteraction: true,
+        silent: false,
+        data: {
+          incidentId: incident.id,
+          coordinates: incidentCoords,
+          timestamp: new Date().toISOString(),
+          actionUrl: '/'
+        }
+      });
+
+      // FIXED: Safe vibration with error handling
+      if (notificationSuccess) {
+        safeVibrate([200, 100, 200, 100, 200]);
       }
+
+      // Log urgent alert for monitoring
+      console.log('🚨 URGENT SAFETY ALERT processed:', {
+        incidentId: incident.id,
+        location: incident.location_address,
+        coordinates: incidentCoords,
+        browserNotification: notificationSuccess,
+        timestamp: new Date().toISOString()
+      });
     }
-  }, [showNotification, getIncidentCoordinates]);
+  }, [showNotification, getIncidentCoordinates, showSafeBrowserNotification, safeVibrate]);
 
   // FIXED: Cleanup function to properly unsubscribe from channels
   const cleanupSubscriptions = useCallback(() => {
@@ -297,7 +426,7 @@ export const useIncidentsRealtime = () => {
       const alertChannel = createSafetyAlertsChannel(handleSafetyAlert);
       alertChannelRef.current = alertChannel;
 
-      // Subscribe to channels
+      // Subscribe to channels with enhanced error handling
       const incidentSubscription = incidentChannel.subscribe((status: string) => {
         console.log('Incident channel subscription status:', status);
         if (status === 'SUBSCRIBED') {
@@ -307,10 +436,15 @@ export const useIncidentsRealtime = () => {
           // Attempt to reconnect after a delay
           setTimeout(() => {
             if (isSubscribedRef.current) {
+              console.log('Attempting to reconnect incident channel...');
               cleanupSubscriptions();
               setupSubscriptions();
             }
           }, 5000);
+        } else if (status === 'TIMED_OUT') {
+          console.warn('Incident channel subscription timed out');
+        } else if (status === 'CLOSED') {
+          console.log('Incident channel closed');
         }
       });
 
@@ -323,10 +457,15 @@ export const useIncidentsRealtime = () => {
           // Attempt to reconnect after a delay
           setTimeout(() => {
             if (isSubscribedRef.current) {
+              console.log('Attempting to reconnect alert channel...');
               cleanupSubscriptions();
               setupSubscriptions();
             }
           }, 5000);
+        } else if (status === 'TIMED_OUT') {
+          console.warn('Alert channel subscription timed out');
+        } else if (status === 'CLOSED') {
+          console.log('Alert channel closed');
         }
       });
 
@@ -336,6 +475,12 @@ export const useIncidentsRealtime = () => {
     } catch (error) {
       console.error('Error setting up real-time subscriptions:', error);
       cleanupSubscriptions();
+      
+      // Retry setup after a delay
+      setTimeout(() => {
+        console.log('Retrying subscription setup after error...');
+        setupSubscriptions();
+      }, 10000);
     }
   }, [handleIncidentNotification, handleSafetyAlert, cleanupSubscriptions]);
 
