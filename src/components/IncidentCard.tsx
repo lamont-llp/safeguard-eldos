@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { MapPin, Clock, CheckCircle, AlertTriangle, Users, ThumbsUp, ThumbsDown, MessageSquare, X, Send, Loader2 } from 'lucide-react';
 import { useAuthContext } from '../contexts/AuthContext';
-import { supabase } from '../lib/supabase';
+import { supabase, formatTimeAgo } from '../lib/supabase';
 
 interface Incident {
   id: string;
@@ -14,6 +14,8 @@ interface Incident {
   title: string;
   description?: string;
   is_resolved: boolean;
+  latitude?: number;
+  longitude?: number;
 }
 
 interface IncidentCardProps {
@@ -80,17 +82,6 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
       default:
         return <CheckCircle className="w-4 h-4 text-gray-600" />;
     }
-  };
-
-  const formatTimeAgo = (dateString: string): string => {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
-
-    if (diffInSeconds < 60) return `${diffInSeconds} seconds ago`;
-    if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)} minutes ago`;
-    if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)} hours ago`;
-    return `${Math.floor(diffInSeconds / 86400)} days ago`;
   };
 
   // Check if user has already verified this incident
