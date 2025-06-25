@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { MapPin, Clock, CheckCircle, AlertTriangle, Users, ThumbsUp, ThumbsDown, MessageSquare, X, Send, Loader2 } from 'lucide-react';
 import { useAuthContext } from '../contexts/AuthContext';
 import { supabase, formatTimeAgo } from '../lib/supabase';
 
 interface Incident {
   id: string;
+  reporter_id?: string;
   incident_type: string;
   location_address: string;
   created_at: string;
@@ -36,6 +37,16 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
   const [hasVerified, setHasVerified] = useState(false);
   const [isCheckingVerification, setIsCheckingVerification] = useState(false);
   const [verificationError, setVerificationError] = useState('');
+
+  // FIXED: Add mounted ref to track component mount status
+  const isMountedRef = useRef(true);
+
+  // FIXED: Cleanup mounted ref on unmount
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const getSeverityColor = (severity: string) => {
     switch (severity) {
@@ -114,21 +125,27 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
 
         if (error && error.code !== 'PGRST116') { // PGRST116 is "not found" which is expected
           console.error('Error checking verification status:', error);
-          setHasVerified(false);
-          setVerificationError('Failed to check verification status');
+          // FIXED: Only update state if component is still mounted
+          if (isMountedRef.current) {
+            setHasVerified(false);
+            setVerificationError('Failed to check verification status');
+          }
         } else {
-          setHasVerified(!!data);
+          // FIXED: Only update state if component is still mounted
+          if (isMountedRef.current) {
+            setHasVerified(!!data);
+          }
         }
       } catch (error: any) {
         // Don't set error state if the request was aborted (component unmounted)
-        if (!abortController.signal.aborted) {
+        if (!abortController.signal.aborted && isMountedRef.current) {
           console.error('Error checking verification status:', error);
           setHasVerified(false);
           setVerificationError('Failed to check verification status');
         }
       } finally {
         // Only update loading state if component is still mounted
-        if (!abortController.signal.aborted) {
+        if (!abortController.signal.aborted && isMountedRef.current) {
           setIsCheckingVerification(false);
         }
       }
@@ -142,6 +159,7 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
     };
   }, [incident.id, isAuthenticated, profile]);
 
+  // FIXED: Add mounted check to prevent state updates after unmount
   const handleVerificationSubmit = async () => {
     if (!selectedVerificationType || !onVerify) return;
 
@@ -150,18 +168,29 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
     
     try {
       await onVerify(incident.id, selectedVerificationType, verificationNotes || undefined);
-      setHasVerified(true);
-      setShowVerificationPanel(false);
-      setSelectedVerificationType(null);
-      setVerificationNotes('');
+      
+      // FIXED: Only update state if component is still mounted
+      if (isMountedRef.current) {
+        setHasVerified(true);
+        setShowVerificationPanel(false);
+        setSelectedVerificationType(null);
+        setVerificationNotes('');
+      }
     } catch (error: any) {
       console.error('Verification failed:', error);
-      setVerificationError(error.message || 'Failed to submit verification');
+      // FIXED: Only update state if component is still mounted
+      if (isMountedRef.current) {
+        setVerificationError(error.message || 'Failed to submit verification');
+      }
     } finally {
-      setIsSubmitting(false);
+      // FIXED: Only update state if component is still mounted
+      if (isMountedRef.current) {
+        setIsSubmitting(false);
+      }
     }
   };
 
+  // FIXED: Add mounted check to prevent state updates after unmount
   const handleQuickVerification = async (type: 'confirm' | 'dispute') => {
     if (!onVerify) return;
 
@@ -170,12 +199,22 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
     
     try {
       await onVerify(incident.id, type);
-      setHasVerified(true);
+      
+      // FIXED: Only update state if component is still mounted
+      if (isMountedRef.current) {
+        setHasVerified(true);
+      }
     } catch (error: any) {
       console.error('Quick verification failed:', error);
-      setVerificationError(error.message || 'Failed to submit verification');
+      // FIXED: Only update state if component is still mounted
+      if (isMountedRef.current) {
+        setVerificationError(error.message || 'Failed to submit verification');
+      }
     } finally {
-      setIsSubmitting(false);
+      // FIXED: Only update state if component is still mounted
+      if (isMountedRef.current) {
+        setIsSubmitting(false);
+      }
     }
   };
 
