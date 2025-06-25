@@ -159,22 +159,30 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
     };
   }, [incident.id, isAuthenticated, profile]);
 
-  // FIXED: Add mounted check to prevent state updates after unmount
-  const handleVerificationSubmit = async () => {
-    if (!selectedVerificationType || !onVerify) return;
+  // FIXED: Consolidated verification logic into a single handler with different modes
+  const handleVerification = async (
+    type: 'confirm' | 'dispute' | 'additional_info',
+    notes?: string,
+    mode: 'quick' | 'detailed' = 'detailed'
+  ) => {
+    if (!onVerify) return;
 
     setIsSubmitting(true);
     setVerificationError('');
     
     try {
-      await onVerify(incident.id, selectedVerificationType, verificationNotes || undefined);
+      await onVerify(incident.id, type, notes);
       
       // FIXED: Only update state if component is still mounted
       if (isMountedRef.current) {
         setHasVerified(true);
-        setShowVerificationPanel(false);
-        setSelectedVerificationType(null);
-        setVerificationNotes('');
+        
+        // Only close panel and reset form for detailed mode
+        if (mode === 'detailed') {
+          setShowVerificationPanel(false);
+          setSelectedVerificationType(null);
+          setVerificationNotes('');
+        }
       }
     } catch (error: any) {
       console.error('Verification failed:', error);
@@ -190,32 +198,15 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
     }
   };
 
-  // FIXED: Add mounted check to prevent state updates after unmount
-  const handleQuickVerification = async (type: 'confirm' | 'dispute') => {
-    if (!onVerify) return;
+  // FIXED: Use consolidated handler for detailed verification
+  const handleVerificationSubmit = async () => {
+    if (!selectedVerificationType) return;
+    await handleVerification(selectedVerificationType, verificationNotes || undefined, 'detailed');
+  };
 
-    setIsSubmitting(true);
-    setVerificationError('');
-    
-    try {
-      await onVerify(incident.id, type);
-      
-      // FIXED: Only update state if component is still mounted
-      if (isMountedRef.current) {
-        setHasVerified(true);
-      }
-    } catch (error: any) {
-      console.error('Quick verification failed:', error);
-      // FIXED: Only update state if component is still mounted
-      if (isMountedRef.current) {
-        setVerificationError(error.message || 'Failed to submit verification');
-      }
-    } finally {
-      // FIXED: Only update state if component is still mounted
-      if (isMountedRef.current) {
-        setIsSubmitting(false);
-      }
-    }
+  // FIXED: Use consolidated handler for quick verification
+  const handleQuickVerification = async (type: 'confirm' | 'dispute') => {
+    await handleVerification(type, undefined, 'quick');
   };
 
   const getVerificationTypeInfo = (type: 'confirm' | 'dispute' | 'additional_info') => {
@@ -245,6 +236,14 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
           bgColor: 'bg-blue-50 border-blue-200'
         };
     }
+  };
+
+  // FIXED: Consolidated reset function for consistent state management
+  const resetVerificationForm = () => {
+    setShowVerificationPanel(false);
+    setSelectedVerificationType(null);
+    setVerificationNotes('');
+    setVerificationError('');
   };
 
   return (
@@ -373,12 +372,7 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
           <div className="flex items-center justify-between mb-4">
             <h4 className="font-medium text-gray-900">Verify Incident</h4>
             <button
-              onClick={() => {
-                setShowVerificationPanel(false);
-                setSelectedVerificationType(null);
-                setVerificationNotes('');
-                setVerificationError('');
-              }}
+              onClick={resetVerificationForm}
               className="p-1 hover:bg-gray-200 rounded-lg transition-colors"
             >
               <X className="w-4 h-4 text-gray-500" />
