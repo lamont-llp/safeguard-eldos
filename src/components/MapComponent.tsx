@@ -3,40 +3,47 @@ import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { MapPin, Layers, Navigation, Zap, AlertTriangle, Shield, Users, Crosshair } from 'lucide-react';
 
+// FIXED: Proper TypeScript interfaces for type safety
+interface MapIncident {
+  id: string;
+  latitude: number;
+  longitude: number;
+  incident_type: string;
+  severity: string;
+  title: string;
+  is_verified: boolean;
+  is_urgent: boolean;
+  created_at: string;
+}
+
+interface MapSafeRoute {
+  id: string;
+  name: string;
+  start_lat: number;
+  start_lng: number;
+  end_lat: number;
+  end_lng: number;
+  safety_score: number;
+  lighting_quality: string;
+}
+
+interface MapCommunityGroup {
+  id: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+  member_count: number;
+  group_type: string;
+}
+
 interface MapComponentProps {
   latitude?: number;
   longitude?: number;
-  incidents?: Array<{
-    id: string;
-    latitude: number;
-    longitude: number;
-    incident_type: string;
-    severity: string;
-    title: string;
-    is_verified: boolean;
-    is_urgent: boolean;
-    created_at: string;
-  }>;
-  safeRoutes?: Array<{
-    id: string;
-    name: string;
-    start_lat: number;
-    start_lng: number;
-    end_lat: number;
-    end_lng: number;
-    safety_score: number;
-    lighting_quality: string;
-  }>;
-  communityGroups?: Array<{
-    id: string;
-    name: string;
-    latitude: number;
-    longitude: number;
-    member_count: number;
-    group_type: string;
-  }>;
-  onIncidentClick?: (incident: any) => void;
-  onRouteClick?: (route: any) => void;
+  incidents?: MapIncident[];
+  safeRoutes?: MapSafeRoute[];
+  communityGroups?: MapCommunityGroup[];
+  onIncidentClick?: (incident: MapIncident) => void;
+  onRouteClick?: (route: MapSafeRoute) => void;
   onMapClick?: (e: { lngLat: { lat: number; lng: number } }) => void;
   className?: string;
   showControls?: boolean;
@@ -77,6 +84,14 @@ interface LayerState {
   lastActiveLayer: string;
 }
 
+// ENHANCED: Error state interface for comprehensive error handling
+interface ErrorState {
+  type: 'initialization' | 'marker_creation' | 'layer_management' | 'data_processing';
+  message: string;
+  timestamp: number;
+  recoverable: boolean;
+}
+
 const MapComponent: React.FC<MapComponentProps> = ({
   latitude = -26.3054,
   longitude = 27.9389, // Default to Eldorado Park coordinates
@@ -96,6 +111,7 @@ const MapComponent: React.FC<MapComponentProps> = ({
   const map = useRef<maplibregl.Map | null>(null);
   const [mapLoaded, setMapLoaded] = useState(false);
   const [activeLayer, setActiveLayer] = useState<'incidents' | 'routes' | 'groups'>('incidents');
+  const [error, setError] = useState<ErrorState | null>(null);
 
   // FIXED: Consolidated marker state to prevent race conditions
   const [markerState, setMarkerState] = useState<MarkerState>({
@@ -118,6 +134,7 @@ const MapComponent: React.FC<MapComponentProps> = ({
   const eventListenersRef = useRef<EventListenerRecord[]>([]);
   const mapEventListenersRef = useRef<Array<{ event: string; handler: any }>>([]);
   const isCleaningUpRef = useRef(false);
+  const isMountedRef = useRef(true);
   const updateInProgressRef = useRef(false);
 
   // ENHANCED: Helper function to safely add event listeners with automatic cleanup tracking
@@ -127,30 +144,35 @@ const MapComponent: React.FC<MapComponentProps> = ({
     handler: EventListener,
     options?: AddEventListenerOptions
   ): EventListenerRecord => {
-    // Add the event listener
-    element.addEventListener(event, handler, options);
+    try {
+      // Add the event listener
+      element.addEventListener(event, handler, options);
 
-    // Create cleanup function
-    const cleanup = () => {
-      try {
-        element.removeEventListener(event, handler, options);
-      } catch (error) {
-        console.warn('Error removing event listener:', error);
-      }
-    };
+      // Create cleanup function
+      const cleanup = () => {
+        try {
+          element.removeEventListener(event, handler, options);
+        } catch (error) {
+          console.warn('Error removing event listener:', error);
+        }
+      };
 
-    // Create record
-    const record: EventListenerRecord = {
-      element,
-      event,
-      handler,
-      cleanup
-    };
+      // Create record
+      const record: EventListenerRecord = {
+        element,
+        event,
+        handler,
+        cleanup
+      };
 
-    // Track the event listener for cleanup
-    eventListenersRef.current.push(record);
+      // Track the event listener for cleanup
+      eventListenersRef.current.push(record);
 
-    return record;
+      return record;
+    } catch (error) {
+      console.error('Error adding event listener:', error);
+      throw error;
+    }
   }, []);
 
   // ENHANCED: Helper function to create markers with proper event listener management
@@ -160,53 +182,63 @@ const MapComponent: React.FC<MapComponentProps> = ({
     clickHandler?: (event: Event) => void,
     additionalHandlers?: Array<{ event: string; handler: EventListener }>
   ): MarkerRecord => {
-    // Create the marker
-    const marker = new maplibregl.Marker(markerOptions)
-      .setLngLat(lngLat)
-      .addTo(map.current!);
-
-    const eventListeners: EventListenerRecord[] = [];
-
-    // Get the marker element
-    const markerElement = marker.getElement();
-
-    // Add click handler if provided
-    if (clickHandler) {
-      const clickRecord = addEventListenerSafely(markerElement, 'click', clickHandler);
-      eventListeners.push(clickRecord);
-    }
-
-    // Add additional handlers if provided
-    if (additionalHandlers) {
-      additionalHandlers.forEach(({ event, handler }) => {
-        const record = addEventListenerSafely(markerElement, event, handler);
-        eventListeners.push(record);
-      });
-    }
-
-    // Create cleanup function for the entire marker
-    const cleanup = () => {
-      try {
-        // Clean up all event listeners first
-        eventListeners.forEach(record => {
-          record.cleanup();
-        });
-
-        // Remove the marker from the map
-        marker.remove();
-      } catch (error) {
-        console.warn('Error cleaning up marker:', error);
+    try {
+      // FIXED: Check if map exists before creating marker
+      if (!map.current) {
+        throw new Error('Map not initialized');
       }
-    };
 
-    // Create marker record
-    const markerRecord: MarkerRecord = {
-      marker,
-      eventListeners,
-      cleanup
-    };
+      // Create the marker
+      const marker = new maplibregl.Marker(markerOptions)
+        .setLngLat(lngLat)
+        .addTo(map.current);
 
-    return markerRecord;
+      const eventListeners: EventListenerRecord[] = [];
+
+      // Get the marker element
+      const markerElement = marker.getElement();
+
+      // Add click handler if provided
+      if (clickHandler) {
+        const clickRecord = addEventListenerSafely(markerElement, 'click', clickHandler);
+        eventListeners.push(clickRecord);
+      }
+
+      // Add additional handlers if provided
+      if (additionalHandlers) {
+        additionalHandlers.forEach(({ event, handler }) => {
+          const record = addEventListenerSafely(markerElement, event, handler);
+          eventListeners.push(record);
+        });
+      }
+
+      // Create cleanup function for the entire marker
+      const cleanup = () => {
+        try {
+          // Clean up all event listeners first
+          eventListeners.forEach(record => {
+            record.cleanup();
+          });
+
+          // Remove the marker from the map
+          marker.remove();
+        } catch (error) {
+          console.warn('Error cleaning up marker:', error);
+        }
+      };
+
+      // Create marker record
+      const markerRecord: MarkerRecord = {
+        marker,
+        eventListeners,
+        cleanup
+      };
+
+      return markerRecord;
+    } catch (error) {
+      console.error('Error creating marker:', error);
+      throw error;
+    }
   }, [addEventListenerSafely]);
 
   // ENHANCED: Comprehensive cleanup function for all map resources
@@ -217,9 +249,9 @@ const MapComponent: React.FC<MapComponentProps> = ({
 
     isCleaningUpRef.current = true;
 
-    console.log('🧹 Starting comprehensive map cleanup...');
-
     try {
+      console.log('🧹 Starting comprehensive map cleanup...');
+
       // Clean up all markers in state
       Object.values(markerState).forEach(markers => {
         if (Array.isArray(markers)) {
@@ -297,6 +329,12 @@ const MapComponent: React.FC<MapComponentProps> = ({
 
     } catch (error) {
       console.error('Error during map cleanup:', error);
+      setError({
+        type: 'data_processing',
+        message: 'Failed to cleanup map resources',
+        timestamp: Date.now(),
+        recoverable: true
+      });
     } finally {
       isCleaningUpRef.current = false;
     }
@@ -305,8 +343,13 @@ const MapComponent: React.FC<MapComponentProps> = ({
   // ENHANCED: Safe map event listener addition with tracking
   const addMapEventListener = useCallback((event: string, handler: any) => {
     if (map.current) {
-      map.current.on(event, handler);
-      mapEventListenersRef.current.push({ event, handler });
+      try {
+        map.current.on(event, handler);
+        mapEventListenersRef.current.push({ event, handler });
+      } catch (error) {
+        console.error(`Error adding map event listener for ${event}:`, error);
+        throw error;
+      }
     }
   }, []);
 
@@ -341,27 +384,27 @@ const MapComponent: React.FC<MapComponentProps> = ({
   }, [safeRoutes, activeLayer]);
 
   // ENHANCED: Helper function to safely manage route layers
-  const manageRouteLayers = useCallback((routes: typeof safeRoutes, forceUpdate = false) => {
+  const manageRouteLayers = useCallback((routes: MapSafeRoute[], forceUpdate = false) => {
     if (!map.current) return;
 
-    const currentRouteData = JSON.stringify(routes);
-    const needsUpdate = forceUpdate || 
-                       currentRouteData !== layerState.lastRouteData || 
-                       activeLayer !== layerState.lastActiveLayer;
-
-    if (!needsUpdate && layerState.routesLayerExists && activeLayer === 'routes') {
-      console.log('🔄 Route layers unchanged, skipping update');
-      return;
-    }
-
-    console.log('🗺️ Updating route layers...', {
-      routeCount: routes.length,
-      activeLayer,
-      needsUpdate,
-      layerExists: layerState.routesLayerExists
-    });
-
     try {
+      const currentRouteData = JSON.stringify(routes);
+      const needsUpdate = forceUpdate || 
+                         currentRouteData !== layerState.lastRouteData || 
+                         activeLayer !== layerState.lastActiveLayer;
+
+      if (!needsUpdate && layerState.routesLayerExists && activeLayer === 'routes') {
+        console.log('🔄 Route layers unchanged, skipping update');
+        return;
+      }
+
+      console.log('🗺️ Updating route layers...', {
+        routeCount: routes.length,
+        activeLayer,
+        needsUpdate,
+        layerExists: layerState.routesLayerExists
+      });
+
       // Remove existing layers if they exist
       if (layerState.routesLayerExists && map.current.getLayer('routes')) {
         map.current.removeLayer('routes');
@@ -473,82 +516,121 @@ const MapComponent: React.FC<MapComponentProps> = ({
 
     } catch (error) {
       console.error('Error managing route layers:', error);
+      setError({
+        type: 'layer_management',
+        message: 'Failed to manage route layers',
+        timestamp: Date.now(),
+        recoverable: true
+      });
       // Reset layer state on error
       setLayerState(prev => ({
         ...prev,
         routesLayerExists: false,
         routesSourceExists: false,
-        lastRouteData: currentRouteData,
+        lastRouteData: JSON.stringify(routes),
         lastActiveLayer: activeLayer
       }));
     }
-  }, [layerState, activeLayer]);
+  }, [layerState, activeLayer, safeRoutes, onRouteClick, addMapEventListener]);
+
+  // ENHANCED: Safe state update function that checks if component is mounted
+  const safeSetState = useCallback(<T>(setter: React.Dispatch<React.SetStateAction<T>>, value: T | ((prev: T) => T)) => {
+    if (isMountedRef.current) {
+      setter(value);
+    }
+  }, []);
 
   // Initialize map
   useEffect(() => {
     if (!mapContainer.current || map.current) return;
 
-    map.current = new maplibregl.Map({
-      container: mapContainer.current,
-      style: {
-        version: 8,
-        sources: {
-          'osm': {
-            type: 'raster',
-            tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
-            tileSize: 256,
-            attribution: '© OpenStreetMap contributors'
-          }
+    try {
+      console.log('🗺️ Initializing map...');
+
+      map.current = new maplibregl.Map({
+        container: mapContainer.current,
+        style: {
+          version: 8,
+          sources: {
+            'osm': {
+              type: 'raster',
+              tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+              tileSize: 256,
+              attribution: '© OpenStreetMap contributors'
+            }
+          },
+          layers: [
+            {
+              id: 'osm',
+              type: 'raster',
+              source: 'osm'
+            }
+          ]
         },
-        layers: [
-          {
-            id: 'osm',
-            type: 'raster',
-            source: 'osm'
-          }
-        ]
-      },
-      center: [longitude, latitude],
-      zoom: zoom,
-      interactive: interactive
-    });
+        center: [longitude, latitude],
+        zoom: zoom,
+        interactive: interactive
+      });
 
-    map.current.on('load', () => {
-      setMapLoaded(true);
-    });
+      map.current.on('load', () => {
+        console.log('✅ Map loaded successfully');
+        safeSetState(setMapLoaded, true);
+      });
 
-    // ENHANCED: Add click handler for map with proper tracking
-    if (onMapClick) {
-      const mapClickHandler = (e: any) => {
-        onMapClick({ lngLat: { lat: e.lngLat.lat, lng: e.lngLat.lng } });
-        
-        // Add/update selected location marker
-        setMarkerState(prev => {
-          // Clean up previous selected location marker
-          if (prev.selectedLocation) {
-            prev.selectedLocation.remove();
-          }
-          
-          const marker = new maplibregl.Marker({
-            color: '#DC2626',
-            scale: 1.2
-          })
-            .setLngLat([e.lngLat.lng, e.lngLat.lat])
-            .addTo(map.current!);
-          
-          return {
-            ...prev,
-            selectedLocation: marker
-          };
+      map.current.on('error', (e) => {
+        console.error('Map error:', e);
+        setError({
+          type: 'initialization',
+          message: 'Map failed to load',
+          timestamp: Date.now(),
+          recoverable: true
         });
-      };
+      });
 
-      addMapEventListener('click', mapClickHandler);
-    }
+      // ENHANCED: Add click handler for map with proper tracking
+      if (onMapClick) {
+        const mapClickHandler = (e: any) => {
+          onMapClick({ lngLat: { lat: e.lngLat.lat, lng: e.lngLat.lng } });
+          
+          // Add/update selected location marker
+          setMarkerState(prev => {
+            // Clean up previous selected location marker
+            if (prev.selectedLocation) {
+              prev.selectedLocation.remove();
+            }
+            
+            const marker = new maplibregl.Marker({
+              color: '#DC2626',
+              scale: 1.2
+            })
+              .setLngLat([e.lngLat.lng, e.lngLat.lat])
+              .addTo(map.current!);
+            
+            return {
+              ...prev,
+              selectedLocation: marker
+            };
+          });
+        };
 
-    // Add navigation controls if interactive
-    if (interactive && showControls) {
-      map.current.addControl(new maplibregl.NavigationControl(), 'top-right');
+        addMapEventListener('click', mapClickHandler);
+      }
+
+      // Add navigation controls if interactive
+      if (interactive && showControls) {
+        map.current.addControl(new maplibregl.NavigationControl(), 'top-right');
+      }
+
+      console.log('✅ Map initialization completed');
+
+    } catch (error) {
+      console.error('Error initializing map:', error);
+      setError({
+        type: 'initialization',
+        message: 'Failed to initialize map',
+        timestamp: Date.now(),
+        recoverable: false
+      });
     }
 
     return () => {
@@ -559,7 +641,7 @@ const MapComponent: React.FC<MapComponentProps> = ({
         map.current = null;
       }
     };
-  }, []);
+  }, []); // FIXED: Empty dependency array to prevent recreation
 
   // FIXED: Single consolidated effect for all marker updates to prevent race conditions
   useEffect(() => {
@@ -837,19 +919,25 @@ const MapComponent: React.FC<MapComponentProps> = ({
         }
 
         // Update state with new markers
-        setMarkerState(newMarkerState);
+        safeSetState(setMarkerState, newMarkerState);
 
         console.log('✅ Marker update completed successfully');
 
       } catch (error) {
         console.error('Error updating markers:', error);
+        setError({
+          type: 'marker_creation',
+          message: 'Failed to update markers',
+          timestamp: Date.now(),
+          recoverable: true
+        });
       } finally {
         updateInProgressRef.current = false;
       }
     };
 
     updateMarkers();
-  }, [dataHash, mapLoaded]); // FIXED: Use memoized dataHash to prevent unnecessary updates
+  }, [dataHash, mapLoaded, createMarkerWithEventListeners, manageRouteLayers, safeSetState, onIncidentClick, onRouteClick]); // FIXED: Complete dependency array
 
   // ENHANCED: Separate effect for route layer management to prevent unnecessary operations
   useEffect(() => {
@@ -859,7 +947,17 @@ const MapComponent: React.FC<MapComponentProps> = ({
     manageRouteLayers(safeRoutes);
   }, [routeDataHash, mapLoaded, manageRouteLayers]);
 
-  const getLayerIcon = (layer: string) => {
+  // FIXED: Cleanup on component unmount
+  useEffect(() => {
+    return () => {
+      console.log('MapComponent unmounting, cleaning up...');
+      isMountedRef.current = false;
+      cleanupMapResources();
+    };
+  }, [cleanupMapResources]);
+
+  // FIXED: Memoized helper functions to prevent unnecessary re-renders
+  const getLayerIcon = useCallback((layer: string) => {
     switch (layer) {
       case 'incidents':
         return <AlertTriangle className="w-4 h-4" />;
@@ -870,9 +968,9 @@ const MapComponent: React.FC<MapComponentProps> = ({
       default:
         return <MapPin className="w-4 h-4" />;
     }
-  };
+  }, []);
 
-  const getLayerColor = (layer: string) => {
+  const getLayerColor = useCallback((layer: string) => {
     switch (layer) {
       case 'incidents':
         return activeLayer === layer ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200';
@@ -883,11 +981,43 @@ const MapComponent: React.FC<MapComponentProps> = ({
       default:
         return 'bg-gray-100 text-gray-600 hover:bg-gray-200';
     }
-  };
+  }, [activeLayer]);
+
+  // ENHANCED: Error display component
+  const ErrorDisplay = ({ error, onDismiss }: { error: ErrorState; onDismiss: () => void }) => (
+    <div className="absolute top-4 left-4 right-4 bg-red-50 border border-red-200 rounded-lg p-3 z-50">
+      <div className="flex items-start justify-between">
+        <div className="flex items-start space-x-2">
+          <AlertTriangle className="w-5 h-5 text-red-600 mt-0.5" />
+          <div>
+            <h4 className="font-medium text-red-900">Map Error</h4>
+            <p className="text-red-700 text-sm">{error.message}</p>
+            <p className="text-red-600 text-xs mt-1">
+              {error.recoverable ? 'This error is recoverable' : 'Please refresh the page'}
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={onDismiss}
+          className="text-red-600 hover:text-red-800 transition-colors"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
 
   return (
     <div className={`relative ${className}`}>
       <div ref={mapContainer} className="w-full h-full rounded-lg overflow-hidden" />
+      
+      {/* Error Display */}
+      {error && (
+        <ErrorDisplay 
+          error={error} 
+          onDismiss={() => setError(null)} 
+        />
+      )}
       
       {/* Layer Controls */}
       {showControls && interactive && (
@@ -999,10 +1129,14 @@ const MapComponent: React.FC<MapComponentProps> = ({
         </div>
       )}
 
-      <style jsx>{`
+      {/* FIXED: Use regular CSS classes instead of styled-jsx */}
+      <style>{`
         @keyframes pulse {
           0%, 100% { opacity: 1; transform: scale(1); }
           50% { opacity: 0.7; transform: scale(1.1); }
+        }
+        .incident-marker[style*="animation"] {
+          animation: pulse 2s infinite;
         }
       `}</style>
     </div>
