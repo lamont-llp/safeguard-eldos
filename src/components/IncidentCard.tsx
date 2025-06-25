@@ -84,8 +84,11 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
     }
   };
 
-  // Check if user has already verified this incident
+  // Check if user has already verified this incident - FIXED: Added AbortController for cleanup
   useEffect(() => {
+    // Create AbortController for this effect
+    const abortController = new AbortController();
+    
     const checkUserVerification = async () => {
       if (!isAuthenticated || !profile) {
         setHasVerified(false);
@@ -93,29 +96,50 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
       }
 
       setIsCheckingVerification(true);
+      setVerificationError('');
+      
       try {
         const { data, error } = await supabase
           .from('incident_verifications')
           .select('id')
           .eq('incident_id', incident.id)
           .eq('verifier_id', profile.id)
-          .maybeSingle();
+          .maybeSingle()
+          .abortSignal(abortController.signal); // Add abort signal
+
+        // Check if the request was aborted
+        if (abortController.signal.aborted) {
+          return;
+        }
 
         if (error && error.code !== 'PGRST116') { // PGRST116 is "not found" which is expected
           console.error('Error checking verification status:', error);
           setHasVerified(false);
+          setVerificationError('Failed to check verification status');
         } else {
           setHasVerified(!!data);
         }
-      } catch (error) {
-        console.error('Error checking verification status:', error);
-        setHasVerified(false);
+      } catch (error: any) {
+        // Don't set error state if the request was aborted (component unmounted)
+        if (!abortController.signal.aborted) {
+          console.error('Error checking verification status:', error);
+          setHasVerified(false);
+          setVerificationError('Failed to check verification status');
+        }
       } finally {
-        setIsCheckingVerification(false);
+        // Only update loading state if component is still mounted
+        if (!abortController.signal.aborted) {
+          setIsCheckingVerification(false);
+        }
       }
     };
 
     checkUserVerification();
+
+    // Cleanup function to abort the request if component unmounts or dependencies change
+    return () => {
+      abortController.abort();
+    };
   }, [incident.id, isAuthenticated, profile]);
 
   const handleVerificationSubmit = async () => {
