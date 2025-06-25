@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { MapPin, Clock, CheckCircle, AlertTriangle, Users, ThumbsUp, ThumbsDown, MessageSquare, X, Send, Loader2 } from 'lucide-react';
+import { MapPin, Clock, CheckCircle, AlertTriangle, Users, ThumbsUp, ThumbsDown, MessageSquare, X, Send, Loader2, RefreshCw, Wifi, WifiOff } from 'lucide-react';
 import { useAuthContext } from '../contexts/AuthContext';
 import { supabase, formatTimeAgo } from '../lib/supabase';
 
@@ -28,6 +28,23 @@ interface IncidentCardProps {
   ) => Promise<void>;
 }
 
+// Enhanced error types for better error handling
+type ErrorType = 
+  | 'network' 
+  | 'authentication' 
+  | 'permission' 
+  | 'validation' 
+  | 'server' 
+  | 'timeout' 
+  | 'unknown';
+
+interface ErrorState {
+  type: ErrorType;
+  message: string;
+  retryable: boolean;
+  timestamp: number;
+}
+
 const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
   const { isAuthenticated, profile } = useAuthContext();
   const [showVerificationPanel, setShowVerificationPanel] = useState(false);
@@ -36,17 +53,163 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasVerified, setHasVerified] = useState(false);
   const [isCheckingVerification, setIsCheckingVerification] = useState(false);
-  const [verificationError, setVerificationError] = useState('');
+  
+  // FIXED: Enhanced error state management
+  const [errorState, setErrorState] = useState<ErrorState | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
 
   // FIXED: Add mounted ref to track component mount status
   const isMountedRef = useRef(true);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // FIXED: Cleanup mounted ref on unmount
   useEffect(() => {
     return () => {
       isMountedRef.current = false;
+      // Cancel any pending requests
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
     };
   }, []);
+
+  // FIXED: Monitor online/offline status
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // FIXED: Enhanced error classification
+  const classifyError = (error: any): ErrorState => {
+    const timestamp = Date.now();
+    
+    // Network errors
+    if (!isOnline || error.name === 'NetworkError' || error.message?.includes('fetch')) {
+      return {
+        type: 'network',
+        message: 'No internet connection. Please check your network and try again.',
+        retryable: true,
+        timestamp
+      };
+    }
+    
+    // Timeout errors
+    if (error.name === 'AbortError' || error.message?.includes('timeout')) {
+      return {
+        type: 'timeout',
+        message: 'Request timed out. Please try again.',
+        retryable: true,
+        timestamp
+      };
+    }
+    
+    // Authentication errors
+    if (error.message?.includes('JWT') || error.message?.includes('auth') || error.status === 401) {
+      return {
+        type: 'authentication',
+        message: 'Authentication expired. Please sign in again.',
+        retryable: false,
+        timestamp
+      };
+    }
+    
+    // Permission errors
+    if (error.message?.includes('permission') || error.message?.includes('RLS') || error.status === 403) {
+      return {
+        type: 'permission',
+        message: 'You don\'t have permission to perform this action.',
+        retryable: false,
+        timestamp
+      };
+    }
+    
+    // Validation errors (duplicate verification, etc.)
+    if (error.message?.includes('duplicate') || error.message?.includes('already verified') || error.status === 409) {
+      return {
+        type: 'validation',
+        message: 'You have already verified this incident.',
+        retryable: false,
+        timestamp
+      };
+    }
+    
+    // Server errors
+    if (error.status >= 500 || error.message?.includes('server') || error.message?.includes('internal')) {
+      return {
+        type: 'server',
+        message: 'Server error occurred. Please try again in a moment.',
+        retryable: true,
+        timestamp
+      };
+    }
+    
+    // Unknown errors
+    return {
+      type: 'unknown',
+      message: error.message || 'An unexpected error occurred. Please try again.',
+      retryable: true,
+      timestamp
+    };
+  };
+
+  // FIXED: Enhanced error handling with retry logic
+  const handleError = (error: any, context: string) => {
+    console.error(`${context} error:`, error);
+    
+    if (!isMountedRef.current) return;
+    
+    const errorState = classifyError(error);
+    setErrorState(errorState);
+    
+    // Auto-clear certain errors after a delay
+    if (errorState.type === 'network' || errorState.type === 'timeout') {
+      setTimeout(() => {
+        if (isMountedRef.current && Date.now() - errorState.timestamp > 5000) {
+          setErrorState(null);
+        }
+      }, 5000);
+    }
+  };
+
+  // FIXED: Clear error state
+  const clearError = () => {
+    setErrorState(null);
+    setRetryCount(0);
+  };
+
+  // FIXED: Retry mechanism with exponential backoff
+  const retryOperation = async (operation: () => Promise<void>, maxRetries = 3) => {
+    if (retryCount >= maxRetries) {
+      setErrorState(prev => prev ? {
+        ...prev,
+        message: `Failed after ${maxRetries} attempts. Please try again later.`,
+        retryable: false
+      } : null);
+      return;
+    }
+
+    setRetryCount(prev => prev + 1);
+    clearError();
+    
+    // Exponential backoff: 1s, 2s, 4s
+    const delay = Math.pow(2, retryCount) * 1000;
+    await new Promise(resolve => setTimeout(resolve, delay));
+    
+    try {
+      await operation();
+    } catch (error) {
+      handleError(error, 'Retry operation');
+    }
+  };
 
   const getSeverityColor = (severity: string) => {
     switch (severity) {
@@ -95,19 +258,27 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
     }
   };
 
-  // Check if user has already verified this incident - FIXED: Added AbortController for cleanup
+  // FIXED: Enhanced verification check with comprehensive error handling
   useEffect(() => {
-    // Create AbortController for this effect
-    const abortController = new AbortController();
-    
     const checkUserVerification = async () => {
       if (!isAuthenticated || !profile) {
         setHasVerified(false);
         return;
       }
 
+      // Cancel previous request if still pending
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+
+      // Create new AbortController for this request
+      abortControllerRef.current = new AbortController();
+      const timeoutId = setTimeout(() => {
+        abortControllerRef.current?.abort();
+      }, 10000); // 10 second timeout
+
       setIsCheckingVerification(true);
-      setVerificationError('');
+      clearError();
       
       try {
         const { data, error } = await supabase
@@ -116,36 +287,34 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
           .eq('incident_id', incident.id)
           .eq('verifier_id', profile.id)
           .maybeSingle()
-          .abortSignal(abortController.signal); // Add abort signal
+          .abortSignal(abortControllerRef.current.signal);
+
+        clearTimeout(timeoutId);
 
         // Check if the request was aborted
-        if (abortController.signal.aborted) {
+        if (abortControllerRef.current.signal.aborted) {
           return;
         }
 
         if (error && error.code !== 'PGRST116') { // PGRST116 is "not found" which is expected
-          console.error('Error checking verification status:', error);
-          // FIXED: Only update state if component is still mounted
-          if (isMountedRef.current) {
-            setHasVerified(false);
-            setVerificationError('Failed to check verification status');
-          }
-        } else {
-          // FIXED: Only update state if component is still mounted
-          if (isMountedRef.current) {
-            setHasVerified(!!data);
-          }
+          throw error;
+        }
+
+        // FIXED: Only update state if component is still mounted
+        if (isMountedRef.current) {
+          setHasVerified(!!data);
         }
       } catch (error: any) {
-        // Don't set error state if the request was aborted (component unmounted)
-        if (!abortController.signal.aborted && isMountedRef.current) {
-          console.error('Error checking verification status:', error);
+        clearTimeout(timeoutId);
+        
+        // Don't handle error if the request was aborted (component unmounted)
+        if (!abortControllerRef.current.signal.aborted && isMountedRef.current) {
+          handleError(error, 'Verification check');
           setHasVerified(false);
-          setVerificationError('Failed to check verification status');
         }
       } finally {
         // Only update loading state if component is still mounted
-        if (!abortController.signal.aborted && isMountedRef.current) {
+        if (!abortControllerRef.current.signal.aborted && isMountedRef.current) {
           setIsCheckingVerification(false);
         }
       }
@@ -155,11 +324,13 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
 
     // Cleanup function to abort the request if component unmounts or dependencies change
     return () => {
-      abortController.abort();
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
     };
   }, [incident.id, isAuthenticated, profile]);
 
-  // FIXED: Consolidated verification logic into a single handler with different modes
+  // FIXED: Enhanced verification handler with comprehensive error handling
   const handleVerification = async (
     type: 'confirm' | 'dispute' | 'additional_info',
     notes?: string,
@@ -167,8 +338,14 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
   ) => {
     if (!onVerify) return;
 
+    // Check network connectivity
+    if (!isOnline) {
+      handleError(new Error('No internet connection'), 'Verification');
+      return;
+    }
+
     setIsSubmitting(true);
-    setVerificationError('');
+    clearError();
     
     try {
       await onVerify(incident.id, type, notes);
@@ -183,12 +360,14 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
           setSelectedVerificationType(null);
           setVerificationNotes('');
         }
+        
+        // Clear any previous errors on success
+        clearError();
       }
     } catch (error: any) {
-      console.error('Verification failed:', error);
       // FIXED: Only update state if component is still mounted
       if (isMountedRef.current) {
-        setVerificationError(error.message || 'Failed to submit verification');
+        handleError(error, 'Verification');
       }
     } finally {
       // FIXED: Only update state if component is still mounted
@@ -243,7 +422,94 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
     setShowVerificationPanel(false);
     setSelectedVerificationType(null);
     setVerificationNotes('');
-    setVerificationError('');
+    clearError();
+  };
+
+  // FIXED: Enhanced error display component
+  const ErrorDisplay = ({ error, onRetry, onDismiss }: { 
+    error: ErrorState; 
+    onRetry?: () => void; 
+    onDismiss: () => void; 
+  }) => {
+    const getErrorIcon = () => {
+      switch (error.type) {
+        case 'network':
+          return <WifiOff className="w-4 h-4 text-red-600" />;
+        case 'timeout':
+          return <Clock className="w-4 h-4 text-amber-600" />;
+        case 'authentication':
+          return <Users className="w-4 h-4 text-red-600" />;
+        case 'permission':
+          return <AlertTriangle className="w-4 h-4 text-red-600" />;
+        case 'validation':
+          return <CheckCircle className="w-4 h-4 text-blue-600" />;
+        case 'server':
+          return <AlertTriangle className="w-4 h-4 text-red-600" />;
+        default:
+          return <AlertTriangle className="w-4 h-4 text-red-600" />;
+      }
+    };
+
+    const getErrorColor = () => {
+      switch (error.type) {
+        case 'validation':
+          return 'bg-blue-50 border-blue-200 text-blue-800';
+        case 'timeout':
+          return 'bg-amber-50 border-amber-200 text-amber-800';
+        default:
+          return 'bg-red-50 border-red-200 text-red-800';
+      }
+    };
+
+    return (
+      <div className={`p-3 rounded-lg border ${getErrorColor()}`}>
+        <div className="flex items-start space-x-3">
+          {getErrorIcon()}
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium">
+              {error.type === 'network' && 'Connection Error'}
+              {error.type === 'timeout' && 'Request Timeout'}
+              {error.type === 'authentication' && 'Authentication Required'}
+              {error.type === 'permission' && 'Permission Denied'}
+              {error.type === 'validation' && 'Already Verified'}
+              {error.type === 'server' && 'Server Error'}
+              {error.type === 'unknown' && 'Error'}
+            </p>
+            <p className="text-xs mt-1">{error.message}</p>
+            
+            {/* Action buttons */}
+            <div className="flex items-center space-x-2 mt-2">
+              {error.retryable && onRetry && (
+                <button
+                  onClick={onRetry}
+                  className="flex items-center space-x-1 text-xs font-medium hover:underline"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  <span>Retry</span>
+                </button>
+              )}
+              <button
+                onClick={onDismiss}
+                className="text-xs font-medium hover:underline"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+          
+          {/* Network status indicator */}
+          {error.type === 'network' && (
+            <div className="flex items-center space-x-1">
+              {isOnline ? (
+                <Wifi className="w-4 h-4 text-green-600" />
+              ) : (
+                <WifiOff className="w-4 h-4 text-red-600" />
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -325,7 +591,7 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
                     <>
                       <button
                         onClick={() => handleQuickVerification('confirm')}
-                        disabled={isSubmitting}
+                        disabled={isSubmitting || !isOnline}
                         className="flex items-center space-x-1 px-3 py-1 bg-green-50 text-green-700 rounded-lg hover:bg-green-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {isSubmitting ? (
@@ -338,7 +604,8 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
                       
                       <button
                         onClick={() => setShowVerificationPanel(true)}
-                        className="flex items-center space-x-1 px-3 py-1 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors"
+                        disabled={!isOnline}
+                        className="flex items-center space-x-1 px-3 py-1 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <MessageSquare className="w-4 h-4" />
                         <span className="text-xs font-medium">More</span>
@@ -356,10 +623,42 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
               )}
             </div>
 
-            {/* Verification Error */}
-            {verificationError && (
-              <div className="mt-2 text-xs text-red-600 bg-red-50 p-2 rounded">
-                {verificationError}
+            {/* FIXED: Enhanced Error Display */}
+            {errorState && (
+              <div className="mt-3">
+                <ErrorDisplay
+                  error={errorState}
+                  onRetry={errorState.retryable ? () => retryOperation(async () => {
+                    if (errorState.type === 'network' && !isOnline) {
+                      throw new Error('Still offline');
+                    }
+                    // Re-run the verification check
+                    const checkVerification = async () => {
+                      if (!isAuthenticated || !profile) return;
+                      
+                      const { data, error } = await supabase
+                        .from('incident_verifications')
+                        .select('id')
+                        .eq('incident_id', incident.id)
+                        .eq('verifier_id', profile.id)
+                        .maybeSingle();
+
+                      if (error && error.code !== 'PGRST116') throw error;
+                      if (isMountedRef.current) setHasVerified(!!data);
+                    };
+                    
+                    await checkVerification();
+                  }) : undefined}
+                  onDismiss={clearError}
+                />
+              </div>
+            )}
+
+            {/* Network Status Indicator */}
+            {!isOnline && (
+              <div className="mt-2 flex items-center space-x-2 text-xs text-amber-600">
+                <WifiOff className="w-3 h-3" />
+                <span>Offline - Some features may not work</span>
               </div>
             )}
           </div>
@@ -387,7 +686,8 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
                 <button
                   key={type}
                   onClick={() => setSelectedVerificationType(type)}
-                  className={`w-full p-3 rounded-lg border-2 text-left transition-all ${
+                  disabled={!isOnline}
+                  className={`w-full p-3 rounded-lg border-2 text-left transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
                     selectedVerificationType === type
                       ? `${info.bgColor} border-current ${info.color}`
                       : 'border-gray-200 hover:border-gray-300 bg-white'
@@ -429,7 +729,8 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
                       : 'Provide additional information about this incident...'
                   }
                   rows={3}
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
+                  disabled={!isOnline}
+                  className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none disabled:bg-gray-100 disabled:cursor-not-allowed"
                   required={selectedVerificationType === 'additional_info'}
                 />
               </div>
@@ -442,6 +743,7 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
                   onClick={handleVerificationSubmit}
                   disabled={
                     isSubmitting || 
+                    !isOnline ||
                     (selectedVerificationType === 'additional_info' && !verificationNotes.trim())
                   }
                   className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
