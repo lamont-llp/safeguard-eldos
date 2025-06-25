@@ -166,17 +166,32 @@ const Dashboard = () => {
     });
   }, [incidents]); // Only recalculate when incidents array changes
 
-  // FIXED: Memoize filtered incidents for display to prevent unnecessary re-renders
+  // FIXED: Optimize incident filtering and rendering - filter first, then map
   const displayIncidents = useMemo(() => {
-    // Show selected incident from map first, then others
     if (selectedIncident) {
-      const otherIncidents = incidents
-        .filter(incident => incident.id !== selectedIncident.id)
-        .slice(0, 4);
-      return [selectedIncident, ...otherIncidents];
+      // Filter out the selected incident first, then slice
+      const otherIncidents = incidents.filter(incident => incident.id !== selectedIncident.id);
+      return [selectedIncident, ...otherIncidents.slice(0, 4)];
     }
+    
+    // No selected incident, just return first 5
     return incidents.slice(0, 5);
   }, [incidents, selectedIncident]);
+
+  // FIXED: Memoize filtered incidents for rendering to prevent unnecessary re-renders
+  const incidentCards = useMemo(() => {
+    return displayIncidents.map((incident) => (
+      <div 
+        key={incident.id}
+        className={selectedIncident?.id === incident.id ? 'border-2 border-blue-500 rounded-xl' : ''}
+      >
+        <IncidentCard 
+          incident={incident} 
+          onVerify={verifyIncidentReport}
+        />
+      </div>
+    ));
+  }, [displayIncidents, selectedIncident, verifyIncidentReport]);
 
   return (
     <div className="pb-20">
@@ -449,25 +464,8 @@ const Dashboard = () => {
           </div>
         ) : (
           <div className="space-y-3">
-            {/* Show selected incident from map first */}
-            {selectedIncident && (
-              <div className="border-2 border-blue-500 rounded-xl">
-                <IncidentCard 
-                  incident={selectedIncident} 
-                  onVerify={verifyIncidentReport}
-                />
-              </div>
-            )}
-            
-            {displayIncidents.map((incident) => (
-              incident.id !== selectedIncident?.id && (
-                <IncidentCard 
-                  key={incident.id} 
-                  incident={incident} 
-                  onVerify={verifyIncidentReport}
-                />
-              )
-            ))}
+            {/* FIXED: Use pre-filtered and memoized incident cards */}
+            {incidentCards}
             
             {incidents.length === 0 && (
               <div className="text-center py-8">
