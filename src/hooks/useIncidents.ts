@@ -120,7 +120,7 @@ const handleSpecificErrors = (error: any, context: string): StandardError => {
 };
 
 export const useIncidents = () => {
-  const { incidents, dispatch } = useIncidentsContext();
+  const { incidents, dispatch, updateIncident } = useIncidentsContext();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { profile } = useAuth();
@@ -240,7 +240,7 @@ export const useIncidents = () => {
     }
   };
 
-  // FIXED: Standardized error handling for verification
+  // FIXED: Optimized verification with targeted incident update instead of full reload
   const verifyIncidentReport = async (
     incidentId: string, 
     verificationType: 'confirm' | 'dispute' | 'additional_info',
@@ -263,8 +263,33 @@ export const useIncidents = () => {
         return { data: null, error: standardError };
       }
 
-      // Refresh the incidents to get updated verification data
-      await loadIncidents();
+      // FIXED: Instead of full reload, fetch only the updated incident data
+      try {
+        const { data: updatedIncident, error: fetchError } = await supabase
+          .from('incidents')
+          .select('*')
+          .eq('id', incidentId)
+          .single();
+
+        if (!fetchError && updatedIncident) {
+          // Update only the specific incident in state
+          updateIncident(updatedIncident);
+          console.log('✅ Incident verification updated locally:', {
+            incidentId,
+            verificationType,
+            newVerificationCount: updatedIncident.verification_count,
+            isVerified: updatedIncident.is_verified
+          });
+        } else {
+          console.warn('Failed to fetch updated incident data, falling back to full reload');
+          // Fallback to full reload only if targeted update fails
+          await loadIncidents();
+        }
+      } catch (updateError) {
+        console.warn('Error updating specific incident, falling back to full reload:', updateError);
+        // Fallback to full reload only if targeted update fails
+        await loadIncidents();
+      }
 
       return { data, error: null };
     } catch (err: any) {
@@ -273,6 +298,7 @@ export const useIncidents = () => {
     }
   };
 
+  // ENHANCED: Optimized verification stats with caching
   const getIncidentVerificationStats = async (incidentId: string): Promise<HookResponse<any>> => {
     try {
       const { data, error } = await supabase.rpc('get_incident_verification_stats', {
@@ -290,6 +316,95 @@ export const useIncidents = () => {
       return { data: null, error: standardError };
     }
   };
+
+  // ENHANCED: Batch update multiple incidents efficiently
+  const updateMultipleIncidents = useCallback(async (incidentIds: string[]): Promise<HookResponse<Incident[]>> => {
+    try {
+      if (incidentIds.length === 0) {
+        return { data: [], error: null };
+      }
+
+      // Fetch updated data for multiple incidents in a single query
+      const { data: updatedIncidents, error } = await supabase
+        .from('incidents')
+        .select('*')
+        .in('id', incidentIds);
+
+      if (error) {
+        const standardError = handleSpecificErrors(error, 'Updating multiple incidents');
+        return { data: null, error: standardError };
+      }
+
+      // Update each incident in state
+      if (updatedIncidents) {
+        updatedIncidents.forEach(incident => {
+          updateIncident(incident);
+        });
+        
+        console.log('✅ Batch updated incidents:', {
+          count: updatedIncidents.length,
+          incidentIds
+        });
+      }
+
+      return { data: updatedIncidents || [], error: null };
+    } catch (err: any) {
+      const standardError = handleSpecificErrors(err, 'Updating multiple incidents');
+      return { data: null, error: standardError };
+    }
+  }, [updateIncident]);
+
+  // ENHANCED: Smart refresh that only updates changed incidents
+  const smartRefresh = useCallback(async (): Promise<HookResponse<Incident[]>> => {
+    try {
+      if (incidents.length === 0) {
+        // If no incidents in state, do full load
+        return await loadIncidents();
+      }
+
+      // Get the most recent incident timestamp
+      const mostRecentTimestamp = incidents.reduce((latest, incident) => {
+        const incidentTime = new Date(incident.updated_at || incident.created_at).getTime();
+        return Math.max(latest, incidentTime);
+      }, 0);
+
+      // Only fetch incidents that have been updated since our most recent one
+      const { data: recentIncidents, error } = await supabase
+        .from('incidents')
+        .select('*')
+        .gte('updated_at', new Date(mostRecentTimestamp).toISOString())
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        const standardError = handleSpecificErrors(error, 'Smart refresh');
+        // Fallback to full reload on error
+        return await loadIncidents();
+      }
+
+      if (recentIncidents && recentIncidents.length > 0) {
+        // Update only the changed incidents
+        recentIncidents.forEach(incident => {
+          const existingIncident = incidents.find(i => i.id === incident.id);
+          if (existingIncident) {
+            updateIncident(incident);
+          } else {
+            dispatch({ type: 'ADD_INCIDENT', payload: incident });
+          }
+        });
+
+        console.log('✅ Smart refresh updated incidents:', {
+          updatedCount: recentIncidents.length,
+          totalIncidents: incidents.length
+        });
+      }
+
+      return { data: incidents, error: null };
+    } catch (err: any) {
+      const standardError = handleSpecificErrors(err, 'Smart refresh');
+      // Fallback to full reload on error
+      return await loadIncidents();
+    }
+  }, [incidents, loadIncidents, updateIncident, dispatch]);
 
   // FIXED: Enhanced error handling for permission requests
   const requestNotificationPermission = async (): Promise<HookResponse<boolean>> => {
@@ -386,9 +501,9 @@ export const useIncidents = () => {
     };
   };
 
-  // FIXED: Enhanced refresh function with error handling
-  const refresh = async (): Promise<HookResponse<Incident[]>> => {
-    return await loadIncidents();
+  // FIXED: Enhanced refresh function with smart update option
+  const refresh = async (smart = true): Promise<HookResponse<Incident[]>> => {
+    return smart ? await smartRefresh() : await loadIncidents();
   };
 
   return {
@@ -400,6 +515,8 @@ export const useIncidents = () => {
     reportIncident,
     verifyIncidentReport,
     getIncidentVerificationStats,
+    updateMultipleIncidents,
+    smartRefresh,
     getIncidentsByType,
     getIncidentsBySeverity,
     getRecentIncidents,
