@@ -105,18 +105,32 @@ const Dashboard = () => {
 
   const locationInfo = getLocationStatusInfo();
 
-  // Convert incidents for map display
-  const mapIncidents = incidents.map(incident => ({
-    id: incident.id,
-    latitude: latitude || -26.3054, // Use current location or default
-    longitude: longitude || 27.9389,
-    incident_type: incident.incident_type,
-    severity: incident.severity,
-    title: incident.title,
-    is_verified: incident.is_verified,
-    is_urgent: incident.is_urgent,
-    created_at: incident.created_at
-  }));
+  // Convert incidents for map display - FIXED: Use actual incident coordinates
+  const mapIncidents = incidents.map(incident => {
+    // Extract coordinates from PostGIS point or use provided lat/lng
+    let incidentLat = incident.latitude;
+    let incidentLng = incident.longitude;
+    
+    // If coordinates aren't directly available, try to extract from location_point
+    if (!incidentLat || !incidentLng) {
+      // For now, use default coordinates if incident coordinates are missing
+      // In a real implementation, you would parse the PostGIS POINT data
+      incidentLat = -26.3054; // Default to Eldorado Park
+      incidentLng = 27.9389;
+    }
+    
+    return {
+      id: incident.id,
+      latitude: incidentLat,
+      longitude: incidentLng,
+      incident_type: incident.incident_type,
+      severity: incident.severity,
+      title: incident.title,
+      is_verified: incident.is_verified,
+      is_urgent: incident.is_urgent,
+      created_at: incident.created_at
+    };
+  });
 
   return (
     <div className="pb-20">
