@@ -4,6 +4,21 @@ import { useIncidentsContext } from '../contexts/IncidentsContext';
 import { useNotifications } from './useNotifications';
 import { useLocation } from './useLocation';
 
+// ENHANCED: Notification deduplication system
+interface NotificationRecord {
+  incidentId: string;
+  type: 'incident' | 'safety_alert' | 'verification' | 'resolution';
+  timestamp: number;
+  source: 'incident_channel' | 'alert_channel';
+  hash: string; // Unique hash for the notification content
+}
+
+interface NotificationDeduplicator {
+  records: Map<string, NotificationRecord>;
+  maxAge: number; // Maximum age in milliseconds
+  maxRecords: number; // Maximum number of records to keep
+}
+
 export const useIncidentsRealtime = () => {
   const { addIncident, updateIncident, removeIncident } = useIncidentsContext();
   const { showNotification } = useNotifications();
@@ -16,6 +31,202 @@ export const useIncidentsRealtime = () => {
   const notificationQuotaRef = useRef({ count: 0, resetTime: Date.now() });
   const reconnectAttemptsRef = useRef(0);
   const maxReconnectAttempts = 5;
+
+  // ENHANCED: Notification deduplication system
+  const deduplicatorRef = useRef<NotificationDeduplicator>({
+    records: new Map(),
+    maxAge: 300000, // 5 minutes
+    maxRecords: 1000
+  });
+
+  // ENHANCED: Generate unique hash for notification content
+  const generateNotificationHash = useCallback((
+    incidentId: string,
+    type: string,
+    title: string,
+    eventType: string,
+    additionalData?: any
+  ): string => {
+    const content = {
+      incidentId,
+      type,
+      title: title.toLowerCase().trim(),
+      eventType,
+      // Include relevant additional data that affects uniqueness
+      isUrgent: additionalData?.is_urgent,
+      isVerified: additionalData?.is_verified,
+      isResolved: additionalData?.is_resolved,
+      severity: additionalData?.severity
+    };
+    
+    // Create a simple hash from the content
+    const str = JSON.stringify(content);
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32-bit integer
+    }
+    return Math.abs(hash).toString(36);
+  }, []);
+
+  // ENHANCED: Check if notification should be deduplicated
+  const shouldDeduplicateNotification = useCallback((
+    incidentId: string,
+    type: 'incident' | 'safety_alert' | 'verification' | 'resolution',
+    source: 'incident_channel' | 'alert_channel',
+    title: string,
+    eventType: string,
+    additionalData?: any
+  ): boolean => {
+    const deduplicator = deduplicatorRef.current;
+    const now = Date.now();
+    
+    // Clean up old records first
+    const cutoff = now - deduplicator.maxAge;
+    const toDelete: string[] = [];
+    
+    deduplicator.records.forEach((record, key) => {
+      if (record.timestamp < cutoff) {
+        toDelete.push(key);
+      }
+    });
+    
+    toDelete.forEach(key => deduplicator.records.delete(key));
+    
+    // Generate hash for this notification
+    const hash = generateNotificationHash(incidentId, type, title, eventType, additionalData);
+    
+    // Check for exact duplicates (same hash)
+    const existingByHash = Array.from(deduplicator.records.values()).find(
+      record => record.hash === hash
+    );
+    
+    if (existingByHash) {
+      console.log('🚫 Blocked duplicate notification (exact match):', {
+        incidentId,
+        type,
+        source,
+        existingSource: existingByHash.source,
+        timeDiff: now - existingByHash.timestamp,
+        hash
+      });
+      return true; // Should deduplicate
+    }
+    
+    // Check for incident-specific duplicates within time window
+    const recentWindow = 30000; // 30 seconds
+    const recentCutoff = now - recentWindow;
+    
+    const recentForIncident = Array.from(deduplicator.records.values()).filter(
+      record => record.incidentId === incidentId && 
+                record.type === type && 
+                record.timestamp > recentCutoff
+    );
+    
+    if (recentForIncident.length > 0) {
+      console.log('🚫 Blocked duplicate notification (recent for incident):', {
+        incidentId,
+        type,
+        source,
+        recentCount: recentForIncident.length,
+        timeSinceFirst: now - Math.min(...recentForIncident.map(r => r.timestamp))
+      });
+      return true; // Should deduplicate
+    }
+    
+    // Special handling for urgent incidents
+    if (type === 'safety_alert' && additionalData?.is_urgent) {
+      // For urgent incidents, check if we've already sent ANY notification for this incident
+      // within the last 2 minutes to prevent spam
+      const urgentWindow = 120000; // 2 minutes
+      const urgentCutoff = now - urgentWindow;
+      
+      const anyRecentForIncident = Array.from(deduplicator.records.values()).find(
+        record => record.incidentId === incidentId && record.timestamp > urgentCutoff
+      );
+      
+      if (anyRecentForIncident) {
+        console.log('🚫 Blocked duplicate urgent notification (any recent):', {
+          incidentId,
+          source,
+          existingType: anyRecentForIncident.type,
+          existingSource: anyRecentForIncident.source,
+          timeDiff: now - anyRecentForIncident.timestamp
+        });
+        return true; // Should deduplicate
+      }
+    }
+    
+    // Record this notification
+    const recordKey = `${incidentId}-${type}-${source}-${now}`;
+    deduplicator.records.set(recordKey, {
+      incidentId,
+      type,
+      timestamp: now,
+      source,
+      hash
+    });
+    
+    // Limit the number of records to prevent memory bloat
+    if (deduplicator.records.size > deduplicator.maxRecords) {
+      const sortedEntries = Array.from(deduplicator.records.entries())
+        .sort(([, a], [, b]) => a.timestamp - b.timestamp);
+      
+      const toRemove = sortedEntries.slice(0, deduplicator.records.size - deduplicator.maxRecords);
+      toRemove.forEach(([key]) => deduplicator.records.delete(key));
+      
+      console.log('🧹 Cleaned up old notification records:', {
+        removed: toRemove.length,
+        remaining: deduplicator.records.size
+      });
+    }
+    
+    console.log('✅ Notification approved (not duplicate):', {
+      incidentId,
+      type,
+      source,
+      hash,
+      totalRecords: deduplicator.records.size
+    });
+    
+    return false; // Should not deduplicate
+  }, [generateNotificationHash]);
+
+  // ENHANCED: Get deduplication statistics for monitoring
+  const getDeduplicationStats = useCallback(() => {
+    const deduplicator = deduplicatorRef.current;
+    const now = Date.now();
+    
+    const stats = {
+      totalRecords: deduplicator.records.size,
+      byType: {} as Record<string, number>,
+      bySource: {} as Record<string, number>,
+      ageDistribution: {
+        last1min: 0,
+        last5min: 0,
+        last15min: 0,
+        older: 0
+      }
+    };
+    
+    deduplicator.records.forEach(record => {
+      // Count by type
+      stats.byType[record.type] = (stats.byType[record.type] || 0) + 1;
+      
+      // Count by source
+      stats.bySource[record.source] = (stats.bySource[record.source] || 0) + 1;
+      
+      // Age distribution
+      const age = now - record.timestamp;
+      if (age < 60000) stats.ageDistribution.last1min++;
+      else if (age < 300000) stats.ageDistribution.last5min++;
+      else if (age < 900000) stats.ageDistribution.last15min++;
+      else stats.ageDistribution.older++;
+    });
+    
+    return stats;
+  }, []);
 
   // FIXED: Extract coordinates from PostGIS point data
   const extractCoordinatesFromPoint = useCallback((locationPoint: any): { latitude: number; longitude: number } | null => {
@@ -370,6 +581,45 @@ export const useIncidentsRealtime = () => {
     }
   }, []);
 
+  // ENHANCED: Unified notification sender with deduplication
+  const sendNotificationSafely = useCallback((
+    incidentId: string,
+    type: 'incident' | 'safety_alert' | 'verification' | 'resolution',
+    source: 'incident_channel' | 'alert_channel',
+    title: string,
+    notificationData: any,
+    browserNotificationOptions?: NotificationOptions
+  ) => {
+    // Check for deduplication first
+    if (shouldDeduplicateNotification(
+      incidentId,
+      type,
+      source,
+      title,
+      notificationData.eventType || 'unknown',
+      notificationData.data
+    )) {
+      return false; // Notification was deduplicated
+    }
+
+    // Send notification through notification service
+    showNotification(notificationData);
+
+    // Send browser notification if options provided
+    if (browserNotificationOptions) {
+      const browserSuccess = showSafeBrowserNotification(title, browserNotificationOptions);
+      
+      // Vibrate for urgent notifications
+      if (browserSuccess && (type === 'safety_alert' || notificationData.priority === 'urgent')) {
+        safeVibrate([200, 100, 200, 100, 200]);
+      }
+      
+      return browserSuccess;
+    }
+
+    return true;
+  }, [shouldDeduplicateNotification, showNotification, showSafeBrowserNotification, safeVibrate]);
+
   // FIXED: Stabilize notification handler to prevent subscription recreation
   const handleIncidentNotification = useCallback((payload: any) => {
     try {
@@ -380,26 +630,32 @@ export const useIncidentsRealtime = () => {
         // FIXED: Get actual incident coordinates instead of hardcoded (0,0)
         const incidentCoords = getIncidentCoordinates(incident);
 
-        // Show notification for new incidents
-        showNotification({
-          type: 'incident',
-          title: `New ${incident.severity} incident reported`,
-          message: incident.title,
-          priority: incident.severity === 'critical' ? 'urgent' : 
-                   incident.severity === 'high' ? 'high' : 'medium',
-          location: {
-            latitude: incidentCoords.latitude,
-            longitude: incidentCoords.longitude,
-            address: incident.location_address || 'Unknown location'
-          },
-          actionUrl: '/',
-          data: {
-            ...incident,
-            // Add extracted coordinates to the incident data
-            extracted_latitude: incidentCoords.latitude,
-            extracted_longitude: incidentCoords.longitude
+        // ENHANCED: Send notification with deduplication
+        sendNotificationSafely(
+          incident.id,
+          'incident',
+          'incident_channel',
+          `New ${incident.severity} incident reported`,
+          {
+            type: 'incident',
+            title: `New ${incident.severity} incident reported`,
+            message: incident.title,
+            priority: incident.severity === 'critical' ? 'urgent' : 
+                     incident.severity === 'high' ? 'high' : 'medium',
+            location: {
+              latitude: incidentCoords.latitude,
+              longitude: incidentCoords.longitude,
+              address: incident.location_address || 'Unknown location'
+            },
+            actionUrl: '/',
+            data: {
+              ...incident,
+              extracted_latitude: incidentCoords.latitude,
+              extracted_longitude: incidentCoords.longitude
+            },
+            eventType: 'INSERT'
           }
-        });
+        );
 
       } else if (payload.eventType === 'UPDATE') {
         const incident = payload.new;
@@ -410,43 +666,57 @@ export const useIncidentsRealtime = () => {
 
         // Show notification for incident updates (like verification)
         if (incident.is_verified && !payload.old.is_verified) {
-          showNotification({
-            type: 'verification',
-            title: 'Incident Verified',
-            message: `${incident.title} has been verified by the community`,
-            priority: 'medium',
-            location: {
-              latitude: incidentCoords.latitude,
-              longitude: incidentCoords.longitude,
-              address: incident.location_address || 'Unknown location'
-            },
-            actionUrl: '/',
-            data: {
-              ...incident,
-              extracted_latitude: incidentCoords.latitude,
-              extracted_longitude: incidentCoords.longitude
+          sendNotificationSafely(
+            incident.id,
+            'verification',
+            'incident_channel',
+            'Incident Verified',
+            {
+              type: 'verification',
+              title: 'Incident Verified',
+              message: `${incident.title} has been verified by the community`,
+              priority: 'medium',
+              location: {
+                latitude: incidentCoords.latitude,
+                longitude: incidentCoords.longitude,
+                address: incident.location_address || 'Unknown location'
+              },
+              actionUrl: '/',
+              data: {
+                ...incident,
+                extracted_latitude: incidentCoords.latitude,
+                extracted_longitude: incidentCoords.longitude
+              },
+              eventType: 'UPDATE'
             }
-          });
+          );
         }
 
         if (incident.is_resolved && !payload.old.is_resolved) {
-          showNotification({
-            type: 'incident',
-            title: 'Incident Resolved',
-            message: `${incident.title} has been marked as resolved`,
-            priority: 'low',
-            location: {
-              latitude: incidentCoords.latitude,
-              longitude: incidentCoords.longitude,
-              address: incident.location_address || 'Unknown location'
-            },
-            actionUrl: '/',
-            data: {
-              ...incident,
-              extracted_latitude: incidentCoords.latitude,
-              extracted_longitude: incidentCoords.longitude
+          sendNotificationSafely(
+            incident.id,
+            'resolution',
+            'incident_channel',
+            'Incident Resolved',
+            {
+              type: 'incident',
+              title: 'Incident Resolved',
+              message: `${incident.title} has been marked as resolved`,
+              priority: 'low',
+              location: {
+                latitude: incidentCoords.latitude,
+                longitude: incidentCoords.longitude,
+                address: incident.location_address || 'Unknown location'
+              },
+              actionUrl: '/',
+              data: {
+                ...incident,
+                extracted_latitude: incidentCoords.latitude,
+                extracted_longitude: incidentCoords.longitude
+              },
+              eventType: 'UPDATE'
             }
-          });
+          );
         }
 
       } else if (payload.eventType === 'DELETE') {
@@ -455,9 +725,9 @@ export const useIncidentsRealtime = () => {
     } catch (error) {
       console.error('Error handling incident notification:', error);
     }
-  }, [addIncident, updateIncident, removeIncident, showNotification, getIncidentCoordinates]);
+  }, [addIncident, updateIncident, removeIncident, getIncidentCoordinates, sendNotificationSafely]);
 
-  // ENHANCED: Safety alert handler with rate limiting and error boundaries
+  // ENHANCED: Safety alert handler with deduplication and rate limiting
   const handleSafetyAlert = useCallback((payload: any) => {
     try {
       if (payload.eventType === 'INSERT' && payload.new.is_urgent) {
@@ -466,52 +736,54 @@ export const useIncidentsRealtime = () => {
         // FIXED: Get actual incident coordinates for urgent alerts
         const incidentCoords = getIncidentCoordinates(incident);
         
-        // Show urgent notification through notification service
-        showNotification({
-          type: 'safety_alert',
-          title: '🚨 URGENT SAFETY ALERT',
-          message: `${incident.title} - ${incident.location_address}`,
-          priority: 'urgent',
-          location: {
-            latitude: incidentCoords.latitude,
-            longitude: incidentCoords.longitude,
-            address: incident.location_address || 'Unknown location'
+        // ENHANCED: Send urgent notification with deduplication
+        const notificationSent = sendNotificationSafely(
+          incident.id,
+          'safety_alert',
+          'alert_channel',
+          '🚨 SafeGuard Eldos - URGENT ALERT',
+          {
+            type: 'safety_alert',
+            title: '🚨 URGENT SAFETY ALERT',
+            message: `${incident.title} - ${incident.location_address}`,
+            priority: 'urgent',
+            location: {
+              latitude: incidentCoords.latitude,
+              longitude: incidentCoords.longitude,
+              address: incident.location_address || 'Unknown location'
+            },
+            actionUrl: '/',
+            data: {
+              ...incident,
+              extracted_latitude: incidentCoords.latitude,
+              extracted_longitude: incidentCoords.longitude
+            },
+            eventType: 'INSERT'
           },
-          actionUrl: '/',
-          data: {
-            ...incident,
-            extracted_latitude: incidentCoords.latitude,
-            extracted_longitude: incidentCoords.longitude
+          // Browser notification options for urgent alerts
+          {
+            body: `${incident.title} - ${incident.location_address}`,
+            icon: '/shield.svg',
+            badge: '/shield.svg',
+            tag: 'urgent-alert',
+            requireInteraction: true,
+            silent: false,
+            data: {
+              incidentId: incident.id,
+              coordinates: incidentCoords,
+              timestamp: new Date().toISOString(),
+              actionUrl: '/'
+            }
           }
-        });
-
-        // ENHANCED: Safe browser notification with comprehensive error handling
-        const notificationSuccess = showSafeBrowserNotification('🚨 SafeGuard Eldos - URGENT ALERT', {
-          body: `${incident.title} - ${incident.location_address}`,
-          icon: '/shield.svg',
-          badge: '/shield.svg',
-          tag: 'urgent-alert',
-          requireInteraction: true,
-          silent: false,
-          data: {
-            incidentId: incident.id,
-            coordinates: incidentCoords,
-            timestamp: new Date().toISOString(),
-            actionUrl: '/'
-          }
-        });
-
-        // ENHANCED: Safe vibration with error handling
-        if (notificationSuccess) {
-          safeVibrate([200, 100, 200, 100, 200]);
-        }
+        );
 
         // Enhanced logging for monitoring and debugging
         console.log('🚨 URGENT SAFETY ALERT processed:', {
           incidentId: incident.id,
           location: incident.location_address,
           coordinates: incidentCoords,
-          browserNotification: notificationSuccess,
+          notificationSent,
+          deduplicationStats: getDeduplicationStats(),
           timestamp: new Date().toISOString(),
           userAgent: navigator.userAgent,
           notificationPermission: Notification.permission
@@ -520,7 +792,7 @@ export const useIncidentsRealtime = () => {
     } catch (error) {
       console.error('Error handling safety alert:', error);
     }
-  }, [showNotification, getIncidentCoordinates, showSafeBrowserNotification, safeVibrate]);
+  }, [getIncidentCoordinates, sendNotificationSafely, getDeduplicationStats]);
 
   // ENHANCED: Cleanup function with comprehensive error handling
   const cleanupSubscriptions = useCallback(() => {
@@ -647,6 +919,36 @@ export const useIncidentsRealtime = () => {
     }
   }, [handleIncidentNotification, handleSafetyAlert, cleanupSubscriptions]);
 
+  // ENHANCED: Periodic cleanup of deduplication records
+  useEffect(() => {
+    const cleanupInterval = setInterval(() => {
+      const deduplicator = deduplicatorRef.current;
+      const now = Date.now();
+      const cutoff = now - deduplicator.maxAge;
+      
+      const initialSize = deduplicator.records.size;
+      const toDelete: string[] = [];
+      
+      deduplicator.records.forEach((record, key) => {
+        if (record.timestamp < cutoff) {
+          toDelete.push(key);
+        }
+      });
+      
+      toDelete.forEach(key => deduplicator.records.delete(key));
+      
+      if (toDelete.length > 0) {
+        console.log('🧹 Periodic cleanup of deduplication records:', {
+          removed: toDelete.length,
+          remaining: deduplicator.records.size,
+          initialSize
+        });
+      }
+    }, 60000); // Clean up every minute
+
+    return () => clearInterval(cleanupInterval);
+  }, []);
+
   // FIXED: Single effect with proper dependency management and cleanup
   useEffect(() => {
     // Setup subscriptions once
@@ -689,6 +991,18 @@ export const useIncidentsRealtime = () => {
     return () => {
       console.log('useIncidentsRealtime unmounting, cleaning up...');
       cleanupSubscriptions();
+      
+      // Clear deduplication records on unmount
+      deduplicatorRef.current.records.clear();
     };
   }, [cleanupSubscriptions]);
+
+  // ENHANCED: Expose deduplication stats for debugging
+  return {
+    getDeduplicationStats,
+    clearDeduplicationRecords: () => {
+      deduplicatorRef.current.records.clear();
+      console.log('🧹 Manually cleared all deduplication records');
+    }
+  };
 };
