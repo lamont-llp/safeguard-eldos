@@ -26,6 +26,16 @@ interface HookResponse<T> {
   error: StandardError | null;
 }
 
+// ENHANCED: Optimistic update state management
+interface OptimisticUpdate {
+  id: string;
+  type: 'ADD' | 'UPDATE' | 'DELETE';
+  originalData?: Incident;
+  newData?: Incident;
+  timestamp: number;
+  rollbackFn: () => void;
+}
+
 // FIXED: Helper function to create standardized error objects
 const createStandardError = (
   error: any, 
@@ -125,6 +135,157 @@ export const useIncidents = () => {
   const [error, setError] = useState<string | null>(null);
   const { profile } = useAuth();
 
+  // ENHANCED: Track optimistic updates for rollback capability
+  const [optimisticUpdates, setOptimisticUpdates] = useState<Map<string, OptimisticUpdate>>(new Map());
+
+  // ENHANCED: Create optimistic update with rollback capability
+  const createOptimisticUpdate = useCallback((
+    id: string,
+    type: OptimisticUpdate['type'],
+    newData?: Incident,
+    originalData?: Incident
+  ): OptimisticUpdate => {
+    const rollbackFn = () => {
+      switch (type) {
+        case 'ADD':
+          if (originalData) {
+            dispatch({ type: 'REMOVE_INCIDENT', payload: id });
+          }
+          break;
+        case 'UPDATE':
+          if (originalData) {
+            dispatch({ type: 'UPDATE_INCIDENT', payload: originalData });
+          }
+          break;
+        case 'DELETE':
+          if (originalData) {
+            dispatch({ type: 'ADD_INCIDENT', payload: originalData });
+          }
+          break;
+      }
+    };
+
+    return {
+      id,
+      type,
+      originalData,
+      newData,
+      timestamp: Date.now(),
+      rollbackFn
+    };
+  }, [dispatch]);
+
+  // ENHANCED: Apply optimistic update with automatic rollback on failure
+  const applyOptimisticUpdate = useCallback((update: OptimisticUpdate) => {
+    // Store the update for potential rollback
+    setOptimisticUpdates(prev => new Map(prev).set(update.id, update));
+
+    // Apply the optimistic change
+    switch (update.type) {
+      case 'ADD':
+        if (update.newData) {
+          dispatch({ type: 'ADD_INCIDENT', payload: update.newData });
+        }
+        break;
+      case 'UPDATE':
+        if (update.newData) {
+          dispatch({ type: 'UPDATE_INCIDENT', payload: update.newData });
+        }
+        break;
+      case 'DELETE':
+        dispatch({ type: 'REMOVE_INCIDENT', payload: update.id });
+        break;
+    }
+
+    console.log('✅ Applied optimistic update:', {
+      id: update.id,
+      type: update.type,
+      timestamp: update.timestamp
+    });
+  }, [dispatch]);
+
+  // ENHANCED: Confirm optimistic update (remove from rollback tracking)
+  const confirmOptimisticUpdate = useCallback((updateId: string) => {
+    setOptimisticUpdates(prev => {
+      const newMap = new Map(prev);
+      newMap.delete(updateId);
+      return newMap;
+    });
+
+    console.log('✅ Confirmed optimistic update:', updateId);
+  }, []);
+
+  // ENHANCED: Rollback optimistic update
+  const rollbackOptimisticUpdate = useCallback((updateId: string, reason?: string) => {
+    const update = optimisticUpdates.get(updateId);
+    if (update) {
+      console.warn('🔄 Rolling back optimistic update:', {
+        id: updateId,
+        type: update.type,
+        reason: reason || 'Unknown error',
+        timestamp: update.timestamp
+      });
+
+      // Execute rollback
+      update.rollbackFn();
+
+      // Remove from tracking
+      setOptimisticUpdates(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(updateId);
+        return newMap;
+      });
+
+      return true;
+    }
+
+    console.warn('⚠️ No optimistic update found to rollback:', updateId);
+    return false;
+  }, [optimisticUpdates]);
+
+  // ENHANCED: Rollback all pending optimistic updates
+  const rollbackAllOptimisticUpdates = useCallback((reason = 'Bulk rollback') => {
+    console.warn('🔄 Rolling back all optimistic updates:', {
+      count: optimisticUpdates.size,
+      reason
+    });
+
+    optimisticUpdates.forEach((update, id) => {
+      update.rollbackFn();
+    });
+
+    setOptimisticUpdates(new Map());
+  }, [optimisticUpdates]);
+
+  // ENHANCED: Auto-cleanup old optimistic updates (prevent memory leaks)
+  useEffect(() => {
+    const cleanup = () => {
+      const now = Date.now();
+      const maxAge = 30000; // 30 seconds
+
+      setOptimisticUpdates(prev => {
+        const newMap = new Map();
+        prev.forEach((update, id) => {
+          if (now - update.timestamp < maxAge) {
+            newMap.set(id, update);
+          } else {
+            console.warn('🧹 Auto-cleaning old optimistic update:', {
+              id,
+              age: now - update.timestamp,
+              type: update.type
+            });
+            // Don't rollback, just remove from tracking
+            // The update is likely confirmed by now
+          }
+        });
+        return newMap;
+      });
+    };
+
+    const interval = setInterval(cleanup, 10000); // Check every 10 seconds
+    return () => clearInterval(interval);
+  }, []);
+
   const loadIncidents = useCallback(async (): Promise<HookResponse<Incident[]>> => {
     try {
       setLoading(true);
@@ -185,6 +346,7 @@ export const useIncidents = () => {
     }
   }, [dispatch]);
 
+  // FIXED: Enhanced incident reporting with proper optimistic updates and rollback
   const reportIncident = async (incidentData: {
     incident_type: Incident['incident_type'];
     severity: Incident['severity'];
@@ -197,6 +359,10 @@ export const useIncidents = () => {
     is_urgent?: boolean;
     media_urls?: string[];
   }): Promise<HookResponse<Incident>> => {
+    // Generate temporary ID for optimistic update
+    const tempId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    let optimisticUpdateId: string | null = null;
+
     try {
       if (!profile) {
         const authError = createStandardError(
@@ -207,6 +373,46 @@ export const useIncidents = () => {
         return { data: null, error: authError };
       }
 
+      // Create optimistic incident data
+      const optimisticIncident: Incident = {
+        id: tempId,
+        reporter_id: profile.id,
+        incident_type: incidentData.incident_type,
+        severity: incidentData.severity,
+        title: incidentData.title,
+        description: incidentData.description,
+        location_point: `POINT(${incidentData.longitude} ${incidentData.latitude})`,
+        location_address: incidentData.location_address,
+        location_area: incidentData.location_area,
+        latitude: incidentData.latitude,
+        longitude: incidentData.longitude,
+        is_verified: false,
+        verification_count: 0,
+        is_urgent: incidentData.is_urgent || false,
+        is_resolved: false,
+        resolved_at: undefined,
+        media_urls: incidentData.media_urls || [],
+        blockchain_hash: undefined,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+
+      // ENHANCED: Apply optimistic update with rollback capability
+      const optimisticUpdate = createOptimisticUpdate(
+        tempId,
+        'ADD',
+        optimisticIncident
+      );
+      optimisticUpdateId = tempId;
+      applyOptimisticUpdate(optimisticUpdate);
+
+      console.log('🚀 Starting incident report with optimistic update:', {
+        tempId,
+        title: incidentData.title,
+        type: incidentData.incident_type
+      });
+
+      // Attempt actual API call
       const { data, error } = await createIncident({
         reporter_id: profile.id,
         incident_type: incidentData.incident_type,
@@ -218,23 +424,58 @@ export const useIncidents = () => {
         location_point: `POINT(${incidentData.longitude} ${incidentData.latitude})`,
         is_urgent: incidentData.is_urgent || false,
         media_urls: incidentData.media_urls || [],
-        // Add latitude and longitude for real-time notifications
         latitude: incidentData.latitude,
         longitude: incidentData.longitude
       });
 
       if (error) {
+        // FIXED: Rollback optimistic update on API error
+        if (optimisticUpdateId) {
+          rollbackOptimisticUpdate(optimisticUpdateId, `API error: ${error.message}`);
+        }
+        
         const standardError = handleSpecificErrors(error, 'Reporting incident');
         return { data: null, error: standardError };
       }
 
-      // Add to local state immediately for optimistic updates
       if (data) {
+        // ENHANCED: Replace optimistic data with real data
+        console.log('✅ Incident report successful, replacing optimistic data:', {
+          tempId,
+          realId: data.id,
+          title: data.title
+        });
+
+        // Remove optimistic incident and add real one
+        dispatch({ type: 'REMOVE_INCIDENT', payload: tempId });
         dispatch({ type: 'ADD_INCIDENT', payload: data });
+        
+        // Confirm the optimistic update (clean up tracking)
+        if (optimisticUpdateId) {
+          confirmOptimisticUpdate(optimisticUpdateId);
+        }
+
+        return { data, error: null };
+      } else {
+        // FIXED: Handle case where API succeeds but returns no data
+        if (optimisticUpdateId) {
+          rollbackOptimisticUpdate(optimisticUpdateId, 'API returned no data');
+        }
+        
+        const noDataError = createStandardError(
+          new Error('No data returned from server'),
+          'Reporting incident',
+          'Report may have been submitted but confirmation failed'
+        );
+        return { data: null, error: noDataError };
       }
 
-      return { data, error: null };
     } catch (err: any) {
+      // FIXED: Rollback optimistic update on any error
+      if (optimisticUpdateId) {
+        rollbackOptimisticUpdate(optimisticUpdateId, `Exception: ${err.message}`);
+      }
+      
       const standardError = handleSpecificErrors(err, 'Reporting incident');
       return { data: null, error: standardError };
     }
@@ -246,6 +487,8 @@ export const useIncidents = () => {
     verificationType: 'confirm' | 'dispute' | 'additional_info',
     notes?: string
   ): Promise<HookResponse<any>> => {
+    let optimisticUpdateId: string | null = null;
+
     try {
       if (!profile) {
         const authError = createStandardError(
@@ -256,14 +499,57 @@ export const useIncidents = () => {
         return { data: null, error: authError };
       }
 
+      // Find the current incident for optimistic update
+      const currentIncident = incidents.find(i => i.id === incidentId);
+      if (!currentIncident) {
+        const notFoundError = createStandardError(
+          new Error('Incident not found'),
+          'Verifying incident',
+          'The incident you are trying to verify was not found'
+        );
+        return { data: null, error: notFoundError };
+      }
+
+      // ENHANCED: Create optimistic verification update
+      const optimisticIncident: Incident = {
+        ...currentIncident,
+        verification_count: currentIncident.verification_count + 1,
+        is_verified: verificationType === 'confirm' ? 
+          currentIncident.verification_count + 1 >= 3 : // Assume 3 confirmations needed
+          currentIncident.is_verified,
+        updated_at: new Date().toISOString()
+      };
+
+      const optimisticUpdate = createOptimisticUpdate(
+        `verify-${incidentId}-${Date.now()}`,
+        'UPDATE',
+        optimisticIncident,
+        currentIncident
+      );
+      optimisticUpdateId = optimisticUpdate.id;
+      applyOptimisticUpdate(optimisticUpdate);
+
+      console.log('🚀 Starting incident verification with optimistic update:', {
+        incidentId,
+        verificationType,
+        currentCount: currentIncident.verification_count,
+        optimisticCount: optimisticIncident.verification_count
+      });
+
+      // Attempt actual API call
       const { data, error } = await verifyIncident(incidentId, verificationType, notes);
       
       if (error) {
+        // FIXED: Rollback optimistic update on API error
+        if (optimisticUpdateId) {
+          rollbackOptimisticUpdate(optimisticUpdateId, `Verification API error: ${error.message}`);
+        }
+        
         const standardError = handleSpecificErrors(error, 'Verifying incident');
         return { data: null, error: standardError };
       }
 
-      // FIXED: Instead of full reload, fetch only the updated incident data
+      // ENHANCED: Fetch real updated incident data to replace optimistic data
       try {
         const { data: updatedIncident, error: fetchError } = await supabase
           .from('incidents')
@@ -272,27 +558,50 @@ export const useIncidents = () => {
           .single();
 
         if (!fetchError && updatedIncident) {
-          // Update only the specific incident in state
+          // Replace optimistic data with real data
           updateIncident(updatedIncident);
-          console.log('✅ Incident verification updated locally:', {
+          
+          // Confirm the optimistic update
+          if (optimisticUpdateId) {
+            confirmOptimisticUpdate(optimisticUpdateId);
+          }
+          
+          console.log('✅ Incident verification successful, updated with real data:', {
             incidentId,
             verificationType,
-            newVerificationCount: updatedIncident.verification_count,
+            realVerificationCount: updatedIncident.verification_count,
             isVerified: updatedIncident.is_verified
           });
         } else {
-          console.warn('Failed to fetch updated incident data, falling back to full reload');
-          // Fallback to full reload only if targeted update fails
+          console.warn('Failed to fetch updated incident data after verification');
+          
+          // FIXED: Rollback if we can't confirm the update
+          if (optimisticUpdateId) {
+            rollbackOptimisticUpdate(optimisticUpdateId, 'Failed to fetch updated data');
+          }
+          
+          // Fallback to full reload
           await loadIncidents();
         }
       } catch (updateError) {
-        console.warn('Error updating specific incident, falling back to full reload:', updateError);
-        // Fallback to full reload only if targeted update fails
+        console.warn('Error fetching updated incident data:', updateError);
+        
+        // FIXED: Rollback on fetch error
+        if (optimisticUpdateId) {
+          rollbackOptimisticUpdate(optimisticUpdateId, `Fetch error: ${updateError}`);
+        }
+        
+        // Fallback to full reload
         await loadIncidents();
       }
 
       return { data, error: null };
     } catch (err: any) {
+      // FIXED: Rollback optimistic update on any error
+      if (optimisticUpdateId) {
+        rollbackOptimisticUpdate(optimisticUpdateId, `Exception: ${err.message}`);
+      }
+      
       const standardError = handleSpecificErrors(err, 'Verifying incident');
       return { data: null, error: standardError };
     }
@@ -506,6 +815,20 @@ export const useIncidents = () => {
     return smart ? await smartRefresh() : await loadIncidents();
   };
 
+  // ENHANCED: Get optimistic update status for debugging
+  const getOptimisticUpdateStatus = () => {
+    return {
+      pendingCount: optimisticUpdates.size,
+      updates: Array.from(optimisticUpdates.entries()).map(([id, update]) => ({
+        id,
+        type: update.type,
+        age: Date.now() - update.timestamp,
+        hasOriginalData: !!update.originalData,
+        hasNewData: !!update.newData
+      }))
+    };
+  };
+
   return {
     incidents,
     loading,
@@ -525,6 +848,10 @@ export const useIncidents = () => {
     getIncidentsWithTimeAgo,
     getIncidentStats,
     requestNotificationPermission,
-    refresh
+    refresh,
+    // ENHANCED: Optimistic update management
+    rollbackOptimisticUpdate,
+    rollbackAllOptimisticUpdates,
+    getOptimisticUpdateStatus
   };
 };
