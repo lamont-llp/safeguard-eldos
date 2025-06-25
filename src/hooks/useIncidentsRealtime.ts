@@ -13,6 +13,9 @@ export const useIncidentsRealtime = () => {
   const incidentChannelRef = useRef<any>(null);
   const alertChannelRef = useRef<any>(null);
   const isSubscribedRef = useRef(false);
+  const notificationQuotaRef = useRef({ count: 0, resetTime: Date.now() });
+  const reconnectAttemptsRef = useRef(0);
+  const maxReconnectAttempts = 5;
 
   // FIXED: Extract coordinates from PostGIS point data
   const extractCoordinatesFromPoint = useCallback((locationPoint: any): { latitude: number; longitude: number } | null => {
@@ -123,8 +126,69 @@ export const useIncidentsRealtime = () => {
     return fallback;
   }, [extractCoordinatesFromPoint, getFallbackCoordinates]);
 
-  // FIXED: Safe browser notification with comprehensive error handling
+  // ENHANCED: Check notification quota to prevent spam
+  const checkNotificationQuota = useCallback(() => {
+    const now = Date.now();
+    const quota = notificationQuotaRef.current;
+    
+    // Reset quota every hour
+    if (now - quota.resetTime > 3600000) {
+      quota.count = 0;
+      quota.resetTime = now;
+    }
+    
+    // Allow max 20 notifications per hour
+    if (quota.count >= 20) {
+      console.warn('Notification quota exceeded, skipping notification');
+      return false;
+    }
+    
+    quota.count++;
+    return true;
+  }, []);
+
+  // ENHANCED: Validate notification content for security
+  const validateNotificationContent = useCallback((title: string, options: NotificationOptions) => {
+    // Sanitize title
+    const sanitizedTitle = title.replace(/<[^>]*>/g, '').substring(0, 100);
+    
+    // Sanitize body
+    const sanitizedBody = options.body ? 
+      options.body.replace(/<[^>]*>/g, '').substring(0, 300) : 
+      undefined;
+    
+    // Validate URLs
+    const validateUrl = (url: string | undefined) => {
+      if (!url) return undefined;
+      try {
+        const parsed = new URL(url, window.location.origin);
+        return parsed.href;
+      } catch {
+        console.warn('Invalid URL in notification options:', url);
+        return '/shield.svg'; // fallback
+      }
+    };
+
+    return {
+      title: sanitizedTitle,
+      options: {
+        ...options,
+        body: sanitizedBody,
+        icon: validateUrl(options.icon),
+        badge: validateUrl(options.badge),
+        // Ensure data is safe and serializable
+        data: options.data ? JSON.parse(JSON.stringify(options.data)) : undefined
+      }
+    };
+  }, []);
+
+  // ENHANCED: Safe browser notification with comprehensive error handling and security
   const showSafeBrowserNotification = useCallback((title: string, options: NotificationOptions) => {
+    // Check notification quota first
+    if (!checkNotificationQuota()) {
+      return false;
+    }
+
     // Check if notifications are supported
     if (!('Notification' in window)) {
       console.warn('Browser notifications not supported');
@@ -137,52 +201,85 @@ export const useIncidentsRealtime = () => {
       return false;
     }
 
+    // Check if document is visible (don't spam hidden tabs)
+    if (document.hidden && !options.requireInteraction) {
+      console.log('Document hidden, skipping non-urgent notification');
+      return false;
+    }
+
     try {
-      // Validate notification options
-      const safeOptions: NotificationOptions = {
-        ...options,
+      // Validate and sanitize content
+      const { title: safeTitle, options: safeOptions } = validateNotificationContent(title, options);
+
+      // Additional safety checks
+      const finalOptions: NotificationOptions = {
+        ...safeOptions,
         // Ensure icon and badge are valid URLs
-        icon: options.icon || '/shield.svg',
-        badge: options.badge || '/shield.svg',
-        // Ensure tag is a string
-        tag: typeof options.tag === 'string' ? options.tag : 'safeguard-notification',
-        // Ensure data is serializable
-        data: options.data ? JSON.parse(JSON.stringify(options.data)) : undefined
+        icon: safeOptions.icon || '/shield.svg',
+        badge: safeOptions.badge || '/shield.svg',
+        // Ensure tag is a string and unique
+        tag: typeof safeOptions.tag === 'string' ? 
+          `safeguard-${safeOptions.tag}-${Date.now()}` : 
+          `safeguard-notification-${Date.now()}`,
+        // Set reasonable timeout
+        timestamp: Date.now(),
+        // Prevent notification spam
+        renotify: false
       };
 
-      // Create notification with error handling
-      const notification = new Notification(title, safeOptions);
+      // Create notification with comprehensive error handling
+      const notification = new Notification(safeTitle, finalOptions);
 
-      // Handle notification events
+      // Enhanced event handlers with error boundaries
       notification.onshow = () => {
-        console.log('Browser notification shown successfully');
+        console.log('Browser notification shown successfully:', safeTitle);
       };
 
       notification.onerror = (event) => {
         console.error('Browser notification error:', event);
+        // Log error details for debugging
+        console.error('Notification error details:', {
+          title: safeTitle,
+          options: finalOptions,
+          timestamp: new Date().toISOString()
+        });
       };
 
       notification.onclose = () => {
-        console.log('Browser notification closed');
+        console.log('Browser notification closed:', safeTitle);
       };
 
       notification.onclick = () => {
         try {
-          window.focus();
-          if (options.data?.actionUrl) {
-            window.location.href = options.data.actionUrl;
+          // Focus window safely
+          if (window.focus) {
+            window.focus();
           }
+          
+          // Navigate safely
+          if (finalOptions.data?.actionUrl) {
+            const url = finalOptions.data.actionUrl;
+            // Validate URL before navigation
+            if (url.startsWith('/') || url.startsWith(window.location.origin)) {
+              window.location.href = url;
+            } else {
+              console.warn('Blocked navigation to external URL:', url);
+            }
+          }
+          
           notification.close();
         } catch (error) {
           console.error('Error handling notification click:', error);
         }
       };
 
-      // Auto-close non-urgent notifications
-      if (!safeOptions.requireInteraction) {
+      // Auto-close non-urgent notifications with error handling
+      if (!finalOptions.requireInteraction) {
         setTimeout(() => {
           try {
-            notification.close();
+            if (notification) {
+              notification.close();
+            }
           } catch (error) {
             console.warn('Error auto-closing notification:', error);
           }
@@ -194,16 +291,38 @@ export const useIncidentsRealtime = () => {
     } catch (error) {
       console.error('Failed to create browser notification:', error);
       
-      // Log specific error types for debugging
+      // Enhanced error classification and handling
       if (error instanceof TypeError) {
-        console.error('Notification TypeError - likely invalid options:', error.message);
+        console.error('Notification TypeError - invalid options:', {
+          error: error.message,
+          stack: error.stack,
+          title,
+          options
+        });
       } else if (error instanceof DOMException) {
-        console.error('Notification DOMException - browser restriction:', error.message);
+        console.error('Notification DOMException - browser restriction:', {
+          error: error.message,
+          code: error.code,
+          name: error.name
+        });
+        
+        // Handle specific DOMException cases
+        if (error.name === 'NotAllowedError') {
+          console.warn('Notification blocked by browser policy');
+        } else if (error.name === 'AbortError') {
+          console.warn('Notification creation aborted');
+        }
+      } else if (error instanceof RangeError) {
+        console.error('Notification RangeError - likely quota exceeded:', error.message);
       } else {
-        console.error('Unknown notification error:', error);
+        console.error('Unknown notification error:', {
+          error: error.message,
+          type: typeof error,
+          constructor: error.constructor?.name
+        });
       }
 
-      // Attempt to request permission again if it was denied
+      // Attempt permission recovery for specific errors
       if (Notification.permission === 'denied') {
         console.warn('Notification permission denied - cannot show browser notifications');
       } else if (Notification.permission === 'default') {
@@ -217,21 +336,34 @@ export const useIncidentsRealtime = () => {
 
       return false;
     }
-  }, []);
+  }, [checkNotificationQuota, validateNotificationContent]);
 
-  // FIXED: Enhanced vibration with error handling
+  // ENHANCED: Safe vibration with pattern validation
   const safeVibrate = useCallback((pattern: number | number[]) => {
     try {
-      if ('vibrate' in navigator && typeof navigator.vibrate === 'function') {
-        const success = navigator.vibrate(pattern);
-        if (!success) {
-          console.warn('Vibration request failed or was ignored');
-        }
-        return success;
-      } else {
+      if (!('vibrate' in navigator) || typeof navigator.vibrate !== 'function') {
         console.warn('Vibration API not supported');
         return false;
       }
+
+      // Validate vibration pattern
+      let validPattern: number | number[];
+      if (typeof pattern === 'number') {
+        validPattern = Math.min(Math.max(pattern, 0), 5000); // Max 5 seconds
+      } else if (Array.isArray(pattern)) {
+        validPattern = pattern
+          .slice(0, 10) // Max 10 elements
+          .map(p => Math.min(Math.max(p, 0), 1000)); // Max 1 second per element
+      } else {
+        console.warn('Invalid vibration pattern:', pattern);
+        return false;
+      }
+
+      const success = navigator.vibrate(validPattern);
+      if (!success) {
+        console.warn('Vibration request failed or was ignored');
+      }
+      return success;
     } catch (error) {
       console.error('Error triggering vibration:', error);
       return false;
@@ -240,68 +372,21 @@ export const useIncidentsRealtime = () => {
 
   // FIXED: Stabilize notification handler to prevent subscription recreation
   const handleIncidentNotification = useCallback((payload: any) => {
-    if (payload.eventType === 'INSERT') {
-      const incident = payload.new;
-      addIncident(incident);
+    try {
+      if (payload.eventType === 'INSERT') {
+        const incident = payload.new;
+        addIncident(incident);
 
-      // FIXED: Get actual incident coordinates instead of hardcoded (0,0)
-      const incidentCoords = getIncidentCoordinates(incident);
+        // FIXED: Get actual incident coordinates instead of hardcoded (0,0)
+        const incidentCoords = getIncidentCoordinates(incident);
 
-      // Show notification for new incidents
-      showNotification({
-        type: 'incident',
-        title: `New ${incident.severity} incident reported`,
-        message: incident.title,
-        priority: incident.severity === 'critical' ? 'urgent' : 
-                 incident.severity === 'high' ? 'high' : 'medium',
-        location: {
-          latitude: incidentCoords.latitude,
-          longitude: incidentCoords.longitude,
-          address: incident.location_address || 'Unknown location'
-        },
-        actionUrl: '/',
-        data: {
-          ...incident,
-          // Add extracted coordinates to the incident data
-          extracted_latitude: incidentCoords.latitude,
-          extracted_longitude: incidentCoords.longitude
-        }
-      });
-
-    } else if (payload.eventType === 'UPDATE') {
-      const incident = payload.new;
-      updateIncident(incident);
-
-      // FIXED: Get actual incident coordinates for update notifications
-      const incidentCoords = getIncidentCoordinates(incident);
-
-      // Show notification for incident updates (like verification)
-      if (incident.is_verified && !payload.old.is_verified) {
-        showNotification({
-          type: 'verification',
-          title: 'Incident Verified',
-          message: `${incident.title} has been verified by the community`,
-          priority: 'medium',
-          location: {
-            latitude: incidentCoords.latitude,
-            longitude: incidentCoords.longitude,
-            address: incident.location_address || 'Unknown location'
-          },
-          actionUrl: '/',
-          data: {
-            ...incident,
-            extracted_latitude: incidentCoords.latitude,
-            extracted_longitude: incidentCoords.longitude
-          }
-        });
-      }
-
-      if (incident.is_resolved && !payload.old.is_resolved) {
+        // Show notification for new incidents
         showNotification({
           type: 'incident',
-          title: 'Incident Resolved',
-          message: `${incident.title} has been marked as resolved`,
-          priority: 'low',
+          title: `New ${incident.severity} incident reported`,
+          message: incident.title,
+          priority: incident.severity === 'critical' ? 'urgent' : 
+                   incident.severity === 'high' ? 'high' : 'medium',
           location: {
             latitude: incidentCoords.latitude,
             longitude: incidentCoords.longitude,
@@ -310,77 +395,134 @@ export const useIncidentsRealtime = () => {
           actionUrl: '/',
           data: {
             ...incident,
+            // Add extracted coordinates to the incident data
             extracted_latitude: incidentCoords.latitude,
             extracted_longitude: incidentCoords.longitude
           }
         });
-      }
 
-    } else if (payload.eventType === 'DELETE') {
-      removeIncident(payload.old.id);
+      } else if (payload.eventType === 'UPDATE') {
+        const incident = payload.new;
+        updateIncident(incident);
+
+        // FIXED: Get actual incident coordinates for update notifications
+        const incidentCoords = getIncidentCoordinates(incident);
+
+        // Show notification for incident updates (like verification)
+        if (incident.is_verified && !payload.old.is_verified) {
+          showNotification({
+            type: 'verification',
+            title: 'Incident Verified',
+            message: `${incident.title} has been verified by the community`,
+            priority: 'medium',
+            location: {
+              latitude: incidentCoords.latitude,
+              longitude: incidentCoords.longitude,
+              address: incident.location_address || 'Unknown location'
+            },
+            actionUrl: '/',
+            data: {
+              ...incident,
+              extracted_latitude: incidentCoords.latitude,
+              extracted_longitude: incidentCoords.longitude
+            }
+          });
+        }
+
+        if (incident.is_resolved && !payload.old.is_resolved) {
+          showNotification({
+            type: 'incident',
+            title: 'Incident Resolved',
+            message: `${incident.title} has been marked as resolved`,
+            priority: 'low',
+            location: {
+              latitude: incidentCoords.latitude,
+              longitude: incidentCoords.longitude,
+              address: incident.location_address || 'Unknown location'
+            },
+            actionUrl: '/',
+            data: {
+              ...incident,
+              extracted_latitude: incidentCoords.latitude,
+              extracted_longitude: incidentCoords.longitude
+            }
+          });
+        }
+
+      } else if (payload.eventType === 'DELETE') {
+        removeIncident(payload.old.id);
+      }
+    } catch (error) {
+      console.error('Error handling incident notification:', error);
     }
   }, [addIncident, updateIncident, removeIncident, showNotification, getIncidentCoordinates]);
 
-  // FIXED: Stabilize safety alert handler with enhanced error handling
+  // ENHANCED: Safety alert handler with rate limiting and error boundaries
   const handleSafetyAlert = useCallback((payload: any) => {
-    if (payload.eventType === 'INSERT' && payload.new.is_urgent) {
-      const incident = payload.new;
-      
-      // FIXED: Get actual incident coordinates for urgent alerts
-      const incidentCoords = getIncidentCoordinates(incident);
-      
-      // Show urgent notification through notification service
-      showNotification({
-        type: 'safety_alert',
-        title: '🚨 URGENT SAFETY ALERT',
-        message: `${incident.title} - ${incident.location_address}`,
-        priority: 'urgent',
-        location: {
-          latitude: incidentCoords.latitude,
-          longitude: incidentCoords.longitude,
-          address: incident.location_address || 'Unknown location'
-        },
-        actionUrl: '/',
-        data: {
-          ...incident,
-          extracted_latitude: incidentCoords.latitude,
-          extracted_longitude: incidentCoords.longitude
-        }
-      });
+    try {
+      if (payload.eventType === 'INSERT' && payload.new.is_urgent) {
+        const incident = payload.new;
+        
+        // FIXED: Get actual incident coordinates for urgent alerts
+        const incidentCoords = getIncidentCoordinates(incident);
+        
+        // Show urgent notification through notification service
+        showNotification({
+          type: 'safety_alert',
+          title: '🚨 URGENT SAFETY ALERT',
+          message: `${incident.title} - ${incident.location_address}`,
+          priority: 'urgent',
+          location: {
+            latitude: incidentCoords.latitude,
+            longitude: incidentCoords.longitude,
+            address: incident.location_address || 'Unknown location'
+          },
+          actionUrl: '/',
+          data: {
+            ...incident,
+            extracted_latitude: incidentCoords.latitude,
+            extracted_longitude: incidentCoords.longitude
+          }
+        });
 
-      // FIXED: Safe browser notification with comprehensive error handling
-      const notificationSuccess = showSafeBrowserNotification('🚨 SafeGuard Eldos - URGENT ALERT', {
-        body: `${incident.title} - ${incident.location_address}`,
-        icon: '/shield.svg',
-        badge: '/shield.svg',
-        tag: 'urgent-alert',
-        requireInteraction: true,
-        silent: false,
-        data: {
+        // ENHANCED: Safe browser notification with comprehensive error handling
+        const notificationSuccess = showSafeBrowserNotification('🚨 SafeGuard Eldos - URGENT ALERT', {
+          body: `${incident.title} - ${incident.location_address}`,
+          icon: '/shield.svg',
+          badge: '/shield.svg',
+          tag: 'urgent-alert',
+          requireInteraction: true,
+          silent: false,
+          data: {
+            incidentId: incident.id,
+            coordinates: incidentCoords,
+            timestamp: new Date().toISOString(),
+            actionUrl: '/'
+          }
+        });
+
+        // ENHANCED: Safe vibration with error handling
+        if (notificationSuccess) {
+          safeVibrate([200, 100, 200, 100, 200]);
+        }
+
+        // Enhanced logging for monitoring and debugging
+        console.log('🚨 URGENT SAFETY ALERT processed:', {
           incidentId: incident.id,
+          location: incident.location_address,
           coordinates: incidentCoords,
+          browserNotification: notificationSuccess,
           timestamp: new Date().toISOString(),
-          actionUrl: '/'
-        }
-      });
-
-      // FIXED: Safe vibration with error handling
-      if (notificationSuccess) {
-        safeVibrate([200, 100, 200, 100, 200]);
+          userAgent: navigator.userAgent,
+          notificationPermission: Notification.permission
+        });
       }
-
-      // Log urgent alert for monitoring
-      console.log('🚨 URGENT SAFETY ALERT processed:', {
-        incidentId: incident.id,
-        location: incident.location_address,
-        coordinates: incidentCoords,
-        browserNotification: notificationSuccess,
-        timestamp: new Date().toISOString()
-      });
+    } catch (error) {
+      console.error('Error handling safety alert:', error);
     }
   }, [showNotification, getIncidentCoordinates, showSafeBrowserNotification, safeVibrate]);
 
-  // FIXED: Cleanup function to properly unsubscribe from channels
+  // ENHANCED: Cleanup function with comprehensive error handling
   const cleanupSubscriptions = useCallback(() => {
     console.log('Cleaning up real-time subscriptions...');
     
@@ -405,13 +547,20 @@ export const useIncidentsRealtime = () => {
     }
 
     isSubscribedRef.current = false;
+    reconnectAttemptsRef.current = 0;
   }, []);
 
-  // FIXED: Setup subscriptions with proper cleanup and memory leak prevention
+  // ENHANCED: Setup subscriptions with exponential backoff and circuit breaker
   const setupSubscriptions = useCallback(() => {
     // Prevent duplicate subscriptions
     if (isSubscribedRef.current) {
       console.log('Subscriptions already active, skipping setup');
+      return;
+    }
+
+    // Circuit breaker - stop trying after max attempts
+    if (reconnectAttemptsRef.current >= maxReconnectAttempts) {
+      console.error('Max reconnection attempts reached, stopping subscription setup');
       return;
     }
 
@@ -426,21 +575,26 @@ export const useIncidentsRealtime = () => {
       const alertChannel = createSafetyAlertsChannel(handleSafetyAlert);
       alertChannelRef.current = alertChannel;
 
-      // Subscribe to channels with enhanced error handling
+      // Subscribe to channels with enhanced error handling and exponential backoff
       const incidentSubscription = incidentChannel.subscribe((status: string) => {
         console.log('Incident channel subscription status:', status);
         if (status === 'SUBSCRIBED') {
           console.log('Successfully subscribed to incident updates');
+          reconnectAttemptsRef.current = 0; // Reset on success
         } else if (status === 'CHANNEL_ERROR') {
           console.error('Error subscribing to incident channel');
-          // Attempt to reconnect after a delay
+          reconnectAttemptsRef.current++;
+          
+          // Exponential backoff: 2^attempts * 1000ms
+          const delay = Math.min(Math.pow(2, reconnectAttemptsRef.current) * 1000, 30000);
+          
           setTimeout(() => {
-            if (isSubscribedRef.current) {
-              console.log('Attempting to reconnect incident channel...');
+            if (isSubscribedRef.current && reconnectAttemptsRef.current < maxReconnectAttempts) {
+              console.log(`Attempting to reconnect incident channel (attempt ${reconnectAttemptsRef.current}/${maxReconnectAttempts})...`);
               cleanupSubscriptions();
               setupSubscriptions();
             }
-          }, 5000);
+          }, delay);
         } else if (status === 'TIMED_OUT') {
           console.warn('Incident channel subscription timed out');
         } else if (status === 'CLOSED') {
@@ -452,16 +606,21 @@ export const useIncidentsRealtime = () => {
         console.log('Alert channel subscription status:', status);
         if (status === 'SUBSCRIBED') {
           console.log('Successfully subscribed to safety alerts');
+          reconnectAttemptsRef.current = 0; // Reset on success
         } else if (status === 'CHANNEL_ERROR') {
           console.error('Error subscribing to alert channel');
-          // Attempt to reconnect after a delay
+          reconnectAttemptsRef.current++;
+          
+          // Exponential backoff: 2^attempts * 1000ms
+          const delay = Math.min(Math.pow(2, reconnectAttemptsRef.current) * 1000, 30000);
+          
           setTimeout(() => {
-            if (isSubscribedRef.current) {
-              console.log('Attempting to reconnect alert channel...');
+            if (isSubscribedRef.current && reconnectAttemptsRef.current < maxReconnectAttempts) {
+              console.log(`Attempting to reconnect alert channel (attempt ${reconnectAttemptsRef.current}/${maxReconnectAttempts})...`);
               cleanupSubscriptions();
               setupSubscriptions();
             }
-          }, 5000);
+          }, delay);
         } else if (status === 'TIMED_OUT') {
           console.warn('Alert channel subscription timed out');
         } else if (status === 'CLOSED') {
@@ -474,13 +633,17 @@ export const useIncidentsRealtime = () => {
 
     } catch (error) {
       console.error('Error setting up real-time subscriptions:', error);
+      reconnectAttemptsRef.current++;
       cleanupSubscriptions();
       
-      // Retry setup after a delay
+      // Retry setup with exponential backoff
+      const delay = Math.min(Math.pow(2, reconnectAttemptsRef.current) * 1000, 30000);
       setTimeout(() => {
-        console.log('Retrying subscription setup after error...');
-        setupSubscriptions();
-      }, 10000);
+        if (reconnectAttemptsRef.current < maxReconnectAttempts) {
+          console.log('Retrying subscription setup after error...');
+          setupSubscriptions();
+        }
+      }, delay);
     }
   }, [handleIncidentNotification, handleSafetyAlert, cleanupSubscriptions]);
 
@@ -503,6 +666,23 @@ export const useIncidentsRealtime = () => {
       // The notification service handles location-based filtering
     }
   }, [latitude, longitude]);
+
+  // ENHANCED: Visibility change handler to manage notifications when tab is hidden/visible
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        console.log('Tab hidden - notifications will be limited to urgent only');
+      } else {
+        console.log('Tab visible - all notifications enabled');
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
 
   // FIXED: Cleanup on component unmount
   useEffect(() => {
