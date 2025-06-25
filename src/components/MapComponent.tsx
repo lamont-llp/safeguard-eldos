@@ -429,6 +429,41 @@ const MapComponent: React.FC<MapComponentProps> = ({
         newLayerState.routesLayerExists = true;
         newLayerState.routesSourceExists = true;
 
+        // ENHANCED: Add click handler for route lines with proper tracking
+        const routeLineClickHandler = (e: any) => {
+          if (e.features && e.features[0] && onRouteClick) {
+            const feature = e.features[0];
+            const route = safeRoutes.find(r => r.id === feature.properties?.id);
+            if (route) {
+              onRouteClick(route);
+            }
+          } else if (e.features && e.features[0]) {
+            // FIXED: Use actual click coordinates instead of route start coordinates
+            const feature = e.features[0];
+            const route = safeRoutes.find(r => r.id === feature.properties?.id);
+            if (route) {
+              new maplibregl.Popup({
+                closeButton: true,
+                closeOnClick: false
+              })
+                .setLngLat([e.lngLat.lng, e.lngLat.lat]) // FIXED: Use click coordinates
+                .setHTML(`
+                  <div class="p-3">
+                    <h3 class="font-semibold text-sm mb-2">${route.name}</h3>
+                    <div class="space-y-1 text-xs">
+                      <p class="text-gray-600">Safety Score: ${route.safety_score}/100</p>
+                      <p class="text-gray-600">Lighting: ${route.lighting_quality}</p>
+                      <p class="text-gray-500 mt-2">📍 Clicked at: ${e.lngLat.lat.toFixed(6)}, ${e.lngLat.lng.toFixed(6)}</p>
+                    </div>
+                  </div>
+                `)
+                .addTo(map.current!);
+            }
+          }
+        };
+
+        addMapEventListener('click', routeLineClickHandler);
+
         console.log('✅ Route layers added successfully');
       } else {
         console.log('🚫 Route layers removed or not needed');
@@ -720,6 +755,7 @@ const MapComponent: React.FC<MapComponentProps> = ({
               if (onRouteClick) {
                 onRouteClick(route);
               } else {
+                // FIXED: For marker clicks, use marker coordinates (this is correct)
                 new maplibregl.Popup()
                   .setLngLat([route.start_lng, route.start_lat])
                   .setHTML(`
@@ -728,6 +764,7 @@ const MapComponent: React.FC<MapComponentProps> = ({
                       <div class="space-y-1 text-xs">
                         <p class="text-gray-600">Safety Score: ${route.safety_score}/100</p>
                         <p class="text-gray-600">Lighting: ${route.lighting_quality}</p>
+                        <p class="text-gray-500 mt-2">📍 Route Start</p>
                       </div>
                     </div>
                   `)
