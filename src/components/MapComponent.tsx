@@ -781,7 +781,7 @@ const MapComponent: React.FC<MapComponentProps> = ({
               </div>
               <div className="flex items-center space-x-2">
                 <div className="w-4 h-1 bg-red-500"></div>
-                <span className="text-xs text-gray-600">Caution (<50)</span>
+                <span className="text-xs text-gray-600">Caution (50)</span>
               </div>
               <div className="flex items-center space-x-2">
                 <div className="w-3 h-3 rounded-full bg-green-500 text-white text-xs flex items-center justify-center">S</div>
