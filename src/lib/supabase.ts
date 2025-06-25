@@ -1,4 +1,9 @@
 import { createClient } from '@supabase/supabase-js';
+import { 
+  extractCoordinatesFromPostGIS, 
+  type CoordinateExtractionResult,
+  type Coordinates 
+} from '../utils/postgisUtils';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -57,6 +62,9 @@ export interface Incident {
   created_at: string;
   updated_at: string;
   distance_meters?: number; // Added for spatial queries
+  // ENHANCED: Add extracted coordinates for consistent access
+  extracted_coordinates?: Coordinates;
+  coordinate_extraction?: CoordinateExtractionResult;
 }
 
 export interface SafeRoute {
@@ -82,6 +90,11 @@ export interface SafeRoute {
   updated_at: string;
   distance_to_start?: number; // Added for spatial queries
   distance_to_end?: number; // Added for spatial queries
+  // ENHANCED: Add extracted coordinates for consistent access
+  start_coordinates?: Coordinates;
+  end_coordinates?: Coordinates;
+  start_extraction?: CoordinateExtractionResult;
+  end_extraction?: CoordinateExtractionResult;
 }
 
 export interface CommunityGroup {
@@ -100,6 +113,9 @@ export interface CommunityGroup {
   created_at: string;
   updated_at: string;
   distance_meters?: number; // Added for spatial queries
+  // ENHANCED: Add extracted coordinates for consistent access
+  center_coordinates?: Coordinates;
+  coordinate_extraction?: CoordinateExtractionResult;
 }
 
 export interface CommunityEvent {
@@ -119,6 +135,9 @@ export interface CommunityEvent {
   requirements?: string;
   created_at: string;
   updated_at: string;
+  // ENHANCED: Add extracted coordinates for consistent access
+  extracted_coordinates?: Coordinates;
+  coordinate_extraction?: CoordinateExtractionResult;
 }
 
 export interface EmergencyContact {
@@ -166,6 +185,89 @@ export interface IncidentVerificationStats {
   is_verified: boolean;
   verification_percentage: number;
 }
+
+// ENHANCED: Coordinate extraction helper functions
+export const extractIncidentCoordinates = (incident: Incident): Incident => {
+  const extraction = extractCoordinatesFromPostGIS({
+    location_point: incident.location_point,
+    latitude: incident.latitude,
+    longitude: incident.longitude,
+    location_address: incident.location_address,
+    location_area: incident.location_area
+  });
+
+  return {
+    ...incident,
+    extracted_coordinates: extraction.coordinates || undefined,
+    coordinate_extraction: extraction,
+    // Update legacy fields for backward compatibility
+    latitude: extraction.coordinates?.latitude || incident.latitude,
+    longitude: extraction.coordinates?.longitude || incident.longitude
+  };
+};
+
+export const extractSafeRouteCoordinates = (route: SafeRoute): SafeRoute => {
+  const startExtraction = extractCoordinatesFromPostGIS({
+    location_point: route.start_point,
+    location_address: route.start_address
+  });
+
+  const endExtraction = extractCoordinatesFromPostGIS({
+    location_point: route.end_point,
+    location_address: route.end_address
+  });
+
+  return {
+    ...route,
+    start_coordinates: startExtraction.coordinates || undefined,
+    end_coordinates: endExtraction.coordinates || undefined,
+    start_extraction: startExtraction,
+    end_extraction: endExtraction
+  };
+};
+
+export const extractCommunityGroupCoordinates = (group: CommunityGroup): CommunityGroup => {
+  const extraction = extractCoordinatesFromPostGIS({
+    location_point: group.area_polygon, // Use polygon center if available
+    location_address: group.area_name
+  });
+
+  return {
+    ...group,
+    center_coordinates: extraction.coordinates || undefined,
+    coordinate_extraction: extraction
+  };
+};
+
+export const extractEventCoordinates = (event: CommunityEvent): CommunityEvent => {
+  const extraction = extractCoordinatesFromPostGIS({
+    location_point: event.location_point,
+    location_address: event.location_address
+  });
+
+  return {
+    ...event,
+    extracted_coordinates: extraction.coordinates || undefined,
+    coordinate_extraction: extraction
+  };
+};
+
+// ENHANCED: Batch coordinate extraction for multiple records
+export const batchExtractIncidentCoordinates = (incidents: Incident[]): Incident[] => {
+  return incidents.map(extractIncidentCoordinates);
+};
+
+export const batchExtractSafeRouteCoordinates = (routes: SafeRoute[]): SafeRoute[] => {
+  return routes.map(extractSafeRouteCoordinates);
+};
+
+export const batchExtractCommunityGroupCoordinates = (groups: CommunityGroup[]): CommunityGroup[] => {
+  return groups.map(extractCommunityGroupCoordinates);
+};
+
+export const batchExtractEventCoordinates = (events: CommunityEvent[]): CommunityEvent[] => {
+  return events.map(extractEventCoordinates);
+};
 
 // Auth helper functions
 export const signUp = async (email: string, password: string) => {
@@ -226,13 +328,20 @@ export const updateProfile = async (userId: string, updates: Partial<Profile>) =
   return { data, error };
 };
 
-// Incident helper functions with PostGIS
+// ENHANCED: Incident helper functions with automatic coordinate extraction
 export const createIncident = async (incidentData: Partial<Incident>) => {
   const { data, error } = await supabase
     .from('incidents')
     .insert([incidentData])
     .select()
     .single();
+  
+  if (data && !error) {
+    // Extract coordinates from the returned data
+    const enhancedData = extractIncidentCoordinates(data);
+    return { data: enhancedData, error };
+  }
+  
   return { data, error };
 };
 
@@ -242,6 +351,13 @@ export const getIncidents = async (limit = 50) => {
     .select('*')
     .order('created_at', { ascending: false })
     .limit(limit);
+  
+  if (data && !error) {
+    // Extract coordinates for all incidents
+    const enhancedData = batchExtractIncidentCoordinates(data);
+    return { data: enhancedData, error };
+  }
+  
   return { data, error };
 };
 
@@ -257,6 +373,13 @@ export const getIncidentsNearLocation = async (
     radius_meters: radiusMeters,
     result_limit: limit
   });
+  
+  if (data && !error) {
+    // Extract coordinates for all incidents
+    const enhancedData = batchExtractIncidentCoordinates(data);
+    return { data: enhancedData, error };
+  }
+  
   return { data, error };
 };
 
@@ -332,13 +455,20 @@ export const hasUserVerifiedIncident = async (incidentId: string): Promise<{ dat
   }
 };
 
-// Safe routes helper functions with PostGIS
+// ENHANCED: Safe routes helper functions with automatic coordinate extraction
 export const getSafeRoutes = async () => {
   const { data, error } = await supabase
     .from('safe_routes')
     .select('*')
     .eq('is_active', true)
     .order('safety_score', { ascending: false });
+  
+  if (data && !error) {
+    // Extract coordinates for all routes
+    const enhancedData = batchExtractSafeRouteCoordinates(data);
+    return { data: enhancedData, error };
+  }
+  
   return { data, error };
 };
 
@@ -354,6 +484,13 @@ export const getSafeRoutesNearLocation = async (
     radius_meters: radiusMeters,
     result_limit: limit
   });
+  
+  if (data && !error) {
+    // Extract coordinates for all routes
+    const enhancedData = batchExtractSafeRouteCoordinates(data);
+    return { data: enhancedData, error };
+  }
+  
   return { data, error };
 };
 
@@ -397,6 +534,13 @@ export const createSafeRoute = async (routeData: Partial<SafeRoute>) => {
     .insert([routeData])
     .select()
     .single();
+  
+  if (data && !error) {
+    // Extract coordinates from the returned data
+    const enhancedData = extractSafeRouteCoordinates(data);
+    return { data: enhancedData, error };
+  }
+  
   return { data, error };
 };
 
@@ -431,13 +575,20 @@ export const rateSafeRoute = async (routeId: string, ratings: {
   return { data, error };
 };
 
-// Community groups helper functions with PostGIS
+// ENHANCED: Community groups helper functions with automatic coordinate extraction
 export const getCommunityGroups = async () => {
   const { data, error } = await supabase
     .from('community_groups')
     .select('*')
     .eq('is_active', true)
     .order('member_count', { ascending: false });
+  
+  if (data && !error) {
+    // Extract coordinates for all groups
+    const enhancedData = batchExtractCommunityGroupCoordinates(data);
+    return { data: enhancedData, error };
+  }
+  
   return { data, error };
 };
 
@@ -451,6 +602,13 @@ export const getCommunityGroupsForLocation = async (
     lng: longitude,
     radius_meters: radiusMeters
   });
+  
+  if (data && !error) {
+    // Extract coordinates for all groups
+    const enhancedData = batchExtractCommunityGroupCoordinates(data);
+    return { data: enhancedData, error };
+  }
+  
   return { data, error };
 };
 
@@ -479,7 +637,7 @@ export const joinCommunityGroup = async (groupId: string) => {
   return { data, error };
 };
 
-// Community events helper functions
+// ENHANCED: Community events helper functions with automatic coordinate extraction
 export const getCommunityEvents = async (limit = 20) => {
   const { data, error } = await supabase
     .from('community_events')
@@ -491,6 +649,13 @@ export const getCommunityEvents = async (limit = 20) => {
     .gte('start_time', new Date().toISOString())
     .order('start_time', { ascending: true })
     .limit(limit);
+  
+  if (data && !error) {
+    // Extract coordinates for all events
+    const enhancedData = batchExtractEventCoordinates(data);
+    return { data: enhancedData, error };
+  }
+  
   return { data, error };
 };
 
