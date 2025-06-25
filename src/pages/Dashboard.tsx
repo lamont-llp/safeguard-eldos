@@ -4,6 +4,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useAuthModal } from '../components/AuthModal';
 import { useIncidents } from '../hooks/useIncidents';
 import { useLocation } from '../hooks/useLocation';
+import { useLocalStorage } from '../hooks/useLocalStorage';
 import EmergencyButton from '../components/EmergencyButton';
 import IncidentCard from '../components/IncidentCard';
 import SafetyStatus from '../components/SafetyStatus';
@@ -16,7 +17,11 @@ const Dashboard = () => {
   const { openSignUp, openSignIn, AuthModal } = useAuthModal();
   const { incidents, loading, verifyIncidentReport, loadIncidentsNearLocation } = useIncidents();
   const { latitude, longitude, hasLocation, getCurrentLocation, error: locationError } = useLocation();
+  
+  // FIXED: Use safe localStorage hook instead of direct localStorage access
+  const [welcomeShown, setWelcomeShown, localStorageError] = useLocalStorage('welcomeShown', false);
   const [showWelcome, setShowWelcome] = useState(false);
+  
   const { unreadCount } = useNotifications();
   const [showNotifications, setShowNotifications] = useState(false);
   const [showMap, setShowMap] = useState(false);
@@ -30,13 +35,13 @@ const Dashboard = () => {
     responseTime: '4 min',
   };
 
+  // FIXED: Safe welcome message handling with error handling
   useEffect(() => {
-    // Show welcome message for new users
-    if (!isAuthenticated && !localStorage.getItem('welcomeShown')) {
+    // Show welcome message for new users, but only if localStorage is working
+    if (!isAuthenticated && !welcomeShown && !localStorageError) {
       setShowWelcome(true);
-      localStorage.setItem('welcomeShown', 'true');
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, welcomeShown, localStorageError]);
 
   useEffect(() => {
     // Update location status and load nearby incidents
@@ -51,9 +56,23 @@ const Dashboard = () => {
     }
   }, [hasLocation, latitude, longitude, locationError, loadIncidentsNearLocation]);
 
+  // FIXED: Safe welcome dismissal with error handling
   const handleJoinCommunity = () => {
     setShowWelcome(false);
+    // Only set localStorage if it's available and working
+    if (!localStorageError) {
+      setWelcomeShown(true);
+    }
     openSignUp();
+  };
+
+  // FIXED: Safe welcome dismissal for "Maybe Later"
+  const handleDismissWelcome = () => {
+    setShowWelcome(false);
+    // Only set localStorage if it's available and working
+    if (!localStorageError) {
+      setWelcomeShown(true);
+    }
   };
 
   const handleNotificationClick = () => {
@@ -134,7 +153,7 @@ const Dashboard = () => {
 
   return (
     <div className="pb-20">
-      {/* Welcome Banner for Anonymous Users */}
+      {/* Welcome Banner for Anonymous Users - FIXED: Enhanced error handling */}
       {showWelcome && (
         <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white p-6 m-4 rounded-2xl shadow-lg">
           <div className="flex items-start space-x-4">
@@ -154,12 +173,19 @@ const Dashboard = () => {
                   Join Community
                 </button>
                 <button
-                  onClick={() => setShowWelcome(false)}
+                  onClick={handleDismissWelcome}
                   className="text-blue-100 hover:text-white transition-colors"
                 >
                   Maybe Later
                 </button>
               </div>
+              
+              {/* FIXED: Show localStorage error if present */}
+              {localStorageError && (
+                <div className="mt-3 p-2 bg-blue-800 bg-opacity-50 rounded text-xs text-blue-100">
+                  <p>⚠️ Settings may not persist: {localStorageError}</p>
+                </div>
+              )}
             </div>
           </div>
         </div>
