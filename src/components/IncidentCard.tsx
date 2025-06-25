@@ -38,6 +38,7 @@ type ErrorType =
   | 'timeout' 
   | 'rate_limit'
   | 'maintenance'
+  | 'abort'
   | 'unknown';
 
 interface ErrorState {
@@ -51,6 +52,7 @@ interface ErrorState {
   severity: 'low' | 'medium' | 'high' | 'critical';
   actionable: boolean; // Whether user can take action
   suggestedActions?: string[]; // Suggested user actions
+  isExpected?: boolean; // Whether this is an expected error (like abort)
 }
 
 interface RetryState {
@@ -125,8 +127,25 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
       timestamp,
       context,
       actionable: true,
-      suggestedActions: []
+      suggestedActions: [],
+      isExpected: false
     };
+    
+    // ENHANCED: Handle AbortError as expected behavior
+    if (error.name === 'AbortError' || error.message?.includes('aborted')) {
+      return {
+        ...baseError,
+        type: 'abort',
+        message: 'Request was cancelled',
+        userMessage: 'Request was cancelled',
+        technicalDetails: `Request aborted: ${error.message || 'Component unmounted or request cancelled'}`,
+        retryable: false,
+        severity: 'low',
+        actionable: false,
+        isExpected: true,
+        suggestedActions: []
+      };
+    }
     
     // Network errors
     if (!isOnline || error.name === 'NetworkError' || error.message?.includes('fetch') || error.code === 'NETWORK_ERROR') {
@@ -147,7 +166,7 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
     }
     
     // Timeout errors
-    if (error.name === 'AbortError' || error.message?.includes('timeout') || error.code === 'TIMEOUT') {
+    if (error.name === 'TimeoutError' || error.message?.includes('timeout') || error.code === 'TIMEOUT') {
       return {
         ...baseError,
         type: 'timeout',
@@ -293,6 +312,28 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
 
   // Enhanced error handling with comprehensive logging and user feedback
   const handleError = (error: any, context: string) => {
+    // ENHANCED: Don't log expected errors (like AbortError) as errors
+    const errorState = classifyError(error, context);
+    
+    if (errorState.isExpected) {
+      // For expected errors, just log at debug level
+      console.debug(`Expected error in ${context}:`, {
+        type: errorState.type,
+        message: errorState.message,
+        incidentId: incident.id
+      });
+      
+      // Don't show expected errors to users unless in development mode
+      if (process.env.NODE_ENV === 'development') {
+        console.log('🔄 Expected error (development mode):', errorState);
+      }
+      
+      // Clear any existing error state for expected errors
+      setErrorState(null);
+      return;
+    }
+    
+    // Log unexpected errors with full details
     console.group(`🚨 IncidentCard Error - ${context}`);
     console.error('Original error:', error);
     console.error('Error stack:', error.stack);
@@ -306,7 +347,6 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
     
     if (!isMountedRef.current) return;
     
-    const errorState = classifyError(error, context);
     setErrorState(errorState);
     
     // Auto-clear low severity errors after a delay
@@ -319,7 +359,7 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
     }
     
     // Log to external error tracking service (if available)
-    if (window.gtag) {
+    if (window.gtag && !errorState.isExpected) {
       window.gtag('event', 'exception', {
         description: `${context}: ${errorState.message}`,
         fatal: errorState.severity === 'critical'
@@ -621,6 +661,11 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
     onRetry?: () => void; 
     onDismiss: () => void; 
   }) => {
+    // Don't show expected errors to users (like AbortError)
+    if (error.isExpected && process.env.NODE_ENV !== 'development') {
+      return null;
+    }
+
     const getErrorIcon = () => {
       switch (error.type) {
         case 'network':
@@ -639,12 +684,18 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
           return <AlertTriangle className="w-5 h-5 text-orange-600" />;
         case 'server':
           return <AlertTriangle className="w-5 h-5 text-red-600" />;
+        case 'abort':
+          return <RefreshCw className="w-5 h-5 text-gray-600" />;
         default:
           return <AlertTriangle className="w-5 h-5 text-red-600" />;
       }
     };
 
     const getErrorColor = () => {
+      if (error.isExpected) {
+        return 'bg-gray-50 border-gray-200';
+      }
+      
       switch (error.severity) {
         case 'low':
           return 'bg-blue-50 border-blue-200';
@@ -660,6 +711,10 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
     };
 
     const getTextColor = () => {
+      if (error.isExpected) {
+        return 'text-gray-800';
+      }
+      
       switch (error.severity) {
         case 'low':
           return 'text-blue-800';
@@ -681,7 +736,7 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
           <div className="flex-1 min-w-0">
             <div className="flex items-center justify-between">
               <h4 className={`font-medium ${getTextColor()}`}>
-                {error.userMessage}
+                {error.isExpected ? 'Request Cancelled' : error.userMessage}
               </h4>
               <button
                 onClick={onDismiss}
@@ -695,8 +750,8 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
               {error.context}
             </p>
 
-            {/* Suggested Actions */}
-            {error.suggestedActions && error.suggestedActions.length > 0 && (
+            {/* Suggested Actions - only for actionable errors */}
+            {error.actionable && error.suggestedActions && error.suggestedActions.length > 0 && (
               <div className="mt-3">
                 <p className={`text-xs font-medium ${getTextColor()}`}>What you can do:</p>
                 <ul className={`text-xs mt-1 space-y-1 ${getTextColor()} opacity-80`}>
@@ -726,7 +781,7 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
                   </button>
                 )}
                 
-                {error.technicalDetails && (
+                {error.technicalDetails && process.env.NODE_ENV === 'development' && (
                   <button
                     onClick={() => setShowErrorDetails(!showErrorDetails)}
                     className={`flex items-center space-x-1 text-xs font-medium px-3 py-1 rounded-md transition-colors ${getTextColor()} hover:bg-white hover:bg-opacity-50`}
@@ -750,8 +805,8 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
               </div>
             </div>
 
-            {/* Technical Details (collapsible) */}
-            {showErrorDetails && error.technicalDetails && (
+            {/* Technical Details (collapsible) - only in development */}
+            {showErrorDetails && error.technicalDetails && process.env.NODE_ENV === 'development' && (
               <div className="mt-3 p-2 bg-gray-100 rounded text-xs font-mono text-gray-700 overflow-x-auto">
                 <div className="flex items-center justify-between mb-1">
                   <span className="font-medium">Technical Details:</span>
