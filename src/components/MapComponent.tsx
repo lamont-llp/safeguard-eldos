@@ -69,6 +69,14 @@ interface MarkerState {
   selectedLocation: maplibregl.Marker | null;
 }
 
+// ENHANCED: Layer state interface to track layer changes
+interface LayerState {
+  routesLayerExists: boolean;
+  routesSourceExists: boolean;
+  lastRouteData: string;
+  lastActiveLayer: string;
+}
+
 const MapComponent: React.FC<MapComponentProps> = ({
   latitude = -26.3054,
   longitude = 27.9389, // Default to Eldorado Park coordinates
@@ -96,6 +104,14 @@ const MapComponent: React.FC<MapComponentProps> = ({
     groups: [],
     userLocation: null,
     selectedLocation: null
+  });
+
+  // ENHANCED: Layer state to prevent unnecessary layer operations
+  const [layerState, setLayerState] = useState<LayerState>({
+    routesLayerExists: false,
+    routesSourceExists: false,
+    lastRouteData: '',
+    lastActiveLayer: ''
   });
 
   // ENHANCED: Use refs to track cleanup state and prevent memory leaks
@@ -248,7 +264,7 @@ const MapComponent: React.FC<MapComponentProps> = ({
       // Remove map layers and sources
       if (map.current) {
         try {
-          // Remove route layers
+          // Remove route layers if they exist
           if (map.current.getLayer('routes')) {
             map.current.removeLayer('routes');
           }
@@ -259,6 +275,14 @@ const MapComponent: React.FC<MapComponentProps> = ({
           console.warn('Error removing map layers/sources:', error);
         }
       }
+
+      // Reset layer state
+      setLayerState({
+        routesLayerExists: false,
+        routesSourceExists: false,
+        lastRouteData: '',
+        lastActiveLayer: ''
+      });
 
       // Reset marker state
       setMarkerState({
@@ -298,6 +322,132 @@ const MapComponent: React.FC<MapComponentProps> = ({
       showUserLocation
     });
   }, [incidents, safeRoutes, communityGroups, activeLayer, latitude, longitude, showUserLocation]);
+
+  // ENHANCED: Memoized route data hash for layer management
+  const routeDataHash = useMemo(() => {
+    return JSON.stringify({
+      routes: safeRoutes.map(r => ({
+        id: r.id,
+        name: r.name,
+        start_lat: r.start_lat,
+        start_lng: r.start_lng,
+        end_lat: r.end_lat,
+        end_lng: r.end_lng,
+        safety_score: r.safety_score,
+        lighting_quality: r.lighting_quality
+      })),
+      activeLayer
+    });
+  }, [safeRoutes, activeLayer]);
+
+  // ENHANCED: Helper function to safely manage route layers
+  const manageRouteLayers = useCallback((routes: typeof safeRoutes, forceUpdate = false) => {
+    if (!map.current) return;
+
+    const currentRouteData = JSON.stringify(routes);
+    const needsUpdate = forceUpdate || 
+                       currentRouteData !== layerState.lastRouteData || 
+                       activeLayer !== layerState.lastActiveLayer;
+
+    if (!needsUpdate && layerState.routesLayerExists && activeLayer === 'routes') {
+      console.log('🔄 Route layers unchanged, skipping update');
+      return;
+    }
+
+    console.log('🗺️ Updating route layers...', {
+      routeCount: routes.length,
+      activeLayer,
+      needsUpdate,
+      layerExists: layerState.routesLayerExists
+    });
+
+    try {
+      // Remove existing layers if they exist
+      if (layerState.routesLayerExists && map.current.getLayer('routes')) {
+        map.current.removeLayer('routes');
+      }
+      if (layerState.routesSourceExists && map.current.getSource('routes')) {
+        map.current.removeSource('routes');
+      }
+
+      let newLayerState = {
+        routesLayerExists: false,
+        routesSourceExists: false,
+        lastRouteData: currentRouteData,
+        lastActiveLayer: activeLayer
+      };
+
+      // Add new layers only if we have routes and routes layer is active
+      if (activeLayer === 'routes' && routes.length > 0) {
+        const routeFeatures = routes.map(route => ({
+          type: 'Feature',
+          properties: {
+            id: route.id,
+            name: route.name,
+            safety_score: route.safety_score,
+            lighting_quality: route.lighting_quality
+          },
+          geometry: {
+            type: 'LineString',
+            coordinates: [
+              [route.start_lng, route.start_lat],
+              [route.end_lng, route.end_lat]
+            ]
+          }
+        }));
+
+        // Add source
+        map.current.addSource('routes', {
+          type: 'geojson',
+          data: {
+            type: 'FeatureCollection',
+            features: routeFeatures
+          }
+        });
+
+        // Add layer
+        map.current.addLayer({
+          id: 'routes',
+          type: 'line',
+          source: 'routes',
+          layout: {
+            'line-join': 'round',
+            'line-cap': 'round'
+          },
+          paint: {
+            'line-color': [
+              'case',
+              ['>=', ['get', 'safety_score'], 75], '#10B981', // Green for safe
+              ['>=', ['get', 'safety_score'], 50], '#F59E0B', // Orange for moderate
+              '#DC2626' // Red for unsafe
+            ],
+            'line-width': 5,
+            'line-opacity': 0.8
+          }
+        });
+
+        newLayerState.routesLayerExists = true;
+        newLayerState.routesSourceExists = true;
+
+        console.log('✅ Route layers added successfully');
+      } else {
+        console.log('🚫 Route layers removed or not needed');
+      }
+
+      setLayerState(newLayerState);
+
+    } catch (error) {
+      console.error('Error managing route layers:', error);
+      // Reset layer state on error
+      setLayerState(prev => ({
+        ...prev,
+        routesLayerExists: false,
+        routesSourceExists: false,
+        lastRouteData: currentRouteData,
+        lastActiveLayer: activeLayer
+      }));
+    }
+  }, [layerState, activeLayer]);
 
   // Initialize map
   useEffect(() => {
@@ -524,58 +674,8 @@ const MapComponent: React.FC<MapComponentProps> = ({
         }
 
         if (activeLayer === 'routes' && safeRoutes.length > 0) {
-          // Handle route layers
-          if (map.current!.getLayer('routes')) {
-            map.current!.removeLayer('routes');
-          }
-          if (map.current!.getSource('routes')) {
-            map.current!.removeSource('routes');
-          }
-
-          const routeFeatures = safeRoutes.map(route => ({
-            type: 'Feature',
-            properties: {
-              id: route.id,
-              name: route.name,
-              safety_score: route.safety_score,
-              lighting_quality: route.lighting_quality
-            },
-            geometry: {
-              type: 'LineString',
-              coordinates: [
-                [route.start_lng, route.start_lat],
-                [route.end_lng, route.end_lat]
-              ]
-            }
-          }));
-
-          map.current!.addSource('routes', {
-            type: 'geojson',
-            data: {
-              type: 'FeatureCollection',
-              features: routeFeatures
-            }
-          });
-
-          map.current!.addLayer({
-            id: 'routes',
-            type: 'line',
-            source: 'routes',
-            layout: {
-              'line-join': 'round',
-              'line-cap': 'round'
-            },
-            paint: {
-              'line-color': [
-                'case',
-                ['>=', ['get', 'safety_score'], 75], '#10B981', // Green for safe
-                ['>=', ['get', 'safety_score'], 50], '#F59E0B', // Orange for moderate
-                '#DC2626' // Red for unsafe
-              ],
-              'line-width': 5,
-              'line-opacity': 0.8
-            }
-          });
+          // FIXED: Use optimized layer management instead of always removing/adding
+          manageRouteLayers(safeRoutes);
 
           // Add route markers
           newMarkerState.routes = safeRoutes.flatMap(route => {
@@ -653,6 +753,9 @@ const MapComponent: React.FC<MapComponentProps> = ({
 
             return markers;
           });
+        } else if (activeLayer !== 'routes') {
+          // ENHANCED: Remove route layers when switching away from routes
+          manageRouteLayers([], true);
         }
 
         if (activeLayer === 'groups') {
@@ -710,6 +813,14 @@ const MapComponent: React.FC<MapComponentProps> = ({
 
     updateMarkers();
   }, [dataHash, mapLoaded]); // FIXED: Use memoized dataHash to prevent unnecessary updates
+
+  // ENHANCED: Separate effect for route layer management to prevent unnecessary operations
+  useEffect(() => {
+    if (!map.current || !mapLoaded) return;
+
+    // Only update route layers when route data actually changes
+    manageRouteLayers(safeRoutes);
+  }, [routeDataHash, mapLoaded, manageRouteLayers]);
 
   const getLayerIcon = (layer: string) => {
     switch (layer) {
