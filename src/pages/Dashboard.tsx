@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Shield, AlertTriangle, CheckCircle, Clock, MapPin, Users, TrendingUp, Bell, Map, Navigation2, Crosshair } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { useAuthModal } from '../components/AuthModal';
@@ -28,12 +28,26 @@ const Dashboard = () => {
   const [selectedIncident, setSelectedIncident] = useState(null);
   const [locationStatus, setLocationStatus] = useState('detecting');
 
-  const safetyMetrics = {
+  // FIXED: Memoize safety metrics to prevent unnecessary recalculations
+  const safetyMetrics = useMemo(() => ({
     activeIncidents: incidents.filter(i => !i.is_resolved).length,
     communityMembers: 1247,
     safeRoutes: 12,
     responseTime: '4 min',
-  };
+  }), [incidents]);
+
+  // FIXED: Memoize location-based insights to prevent unnecessary recalculations
+  const locationInsights = useMemo(() => {
+    if (!hasLocation) return null;
+    
+    return {
+      activeIncidents: incidents.filter(i => !i.is_resolved).length,
+      verifiedReports: incidents.filter(i => i.is_verified).length,
+      recentIncidents: incidents.filter(i => 
+        new Date(i.created_at) > new Date(Date.now() - 24*60*60*1000)
+      ).length
+    };
+  }, [incidents, hasLocation]);
 
   // FIXED: Safe welcome message handling with error handling
   useEffect(() => {
@@ -93,7 +107,8 @@ const Dashboard = () => {
     getCurrentLocation();
   };
 
-  const getLocationStatusInfo = () => {
+  // FIXED: Memoize location status info to prevent unnecessary recalculations
+  const locationInfo = useMemo(() => {
     switch (locationStatus) {
       case 'detecting':
         return {
@@ -120,36 +135,48 @@ const Dashboard = () => {
           color: 'text-gray-400'
         };
     }
-  };
+  }, [locationStatus]);
 
-  const locationInfo = getLocationStatusInfo();
+  // FIXED: Memoize map incidents transformation to prevent unnecessary re-renders
+  const mapIncidents = useMemo(() => {
+    return incidents.map(incident => {
+      // Extract coordinates from PostGIS point or use provided lat/lng
+      let incidentLat = incident.latitude;
+      let incidentLng = incident.longitude;
+      
+      // If coordinates aren't directly available, try to extract from location_point
+      if (!incidentLat || !incidentLng) {
+        // For now, use default coordinates if incident coordinates are missing
+        // In a real implementation, you would parse the PostGIS POINT data
+        incidentLat = -26.3054; // Default to Eldorado Park
+        incidentLng = 27.9389;
+      }
+      
+      return {
+        id: incident.id,
+        latitude: incidentLat,
+        longitude: incidentLng,
+        incident_type: incident.incident_type,
+        severity: incident.severity,
+        title: incident.title,
+        is_verified: incident.is_verified,
+        is_urgent: incident.is_urgent,
+        created_at: incident.created_at
+      };
+    });
+  }, [incidents]); // Only recalculate when incidents array changes
 
-  // Convert incidents for map display - FIXED: Use actual incident coordinates
-  const mapIncidents = incidents.map(incident => {
-    // Extract coordinates from PostGIS point or use provided lat/lng
-    let incidentLat = incident.latitude;
-    let incidentLng = incident.longitude;
-    
-    // If coordinates aren't directly available, try to extract from location_point
-    if (!incidentLat || !incidentLng) {
-      // For now, use default coordinates if incident coordinates are missing
-      // In a real implementation, you would parse the PostGIS POINT data
-      incidentLat = -26.3054; // Default to Eldorado Park
-      incidentLng = 27.9389;
+  // FIXED: Memoize filtered incidents for display to prevent unnecessary re-renders
+  const displayIncidents = useMemo(() => {
+    // Show selected incident from map first, then others
+    if (selectedIncident) {
+      const otherIncidents = incidents
+        .filter(incident => incident.id !== selectedIncident.id)
+        .slice(0, 4);
+      return [selectedIncident, ...otherIncidents];
     }
-    
-    return {
-      id: incident.id,
-      latitude: incidentLat,
-      longitude: incidentLng,
-      incident_type: incident.incident_type,
-      severity: incident.severity,
-      title: incident.title,
-      is_verified: incident.is_verified,
-      is_urgent: incident.is_urgent,
-      created_at: incident.created_at
-    };
-  });
+    return incidents.slice(0, 5);
+  }, [incidents, selectedIncident]);
 
   return (
     <div className="pb-20">
@@ -380,7 +407,7 @@ const Dashboard = () => {
       </div>
 
       {/* Location-Based Insights */}
-      {hasLocation && (
+      {hasLocation && locationInsights && (
         <div className="px-6 mt-6">
           <div className="bg-blue-50 p-4 rounded-xl border border-blue-200">
             <div className="flex items-start space-x-3">
@@ -388,9 +415,9 @@ const Dashboard = () => {
               <div className="flex-1">
                 <h3 className="font-semibold text-blue-900">Location-Based Insights</h3>
                 <div className="mt-2 space-y-1 text-sm text-blue-800">
-                  <p>• {incidents.filter(i => !i.is_resolved).length} active incidents in your monitoring area</p>
-                  <p>• {incidents.filter(i => i.is_verified).length} community-verified reports</p>
-                  <p>• {incidents.filter(i => new Date(i.created_at) > new Date(Date.now() - 24*60*60*1000)).length} incidents reported in the last 24 hours</p>
+                  <p>• {locationInsights.activeIncidents} active incidents in your monitoring area</p>
+                  <p>• {locationInsights.verifiedReports} community-verified reports</p>
+                  <p>• {locationInsights.recentIncidents} incidents reported in the last 24 hours</p>
                 </div>
                 {!showMap && (
                   <button
@@ -432,7 +459,7 @@ const Dashboard = () => {
               </div>
             )}
             
-            {incidents.slice(0, selectedIncident ? 4 : 5).map((incident) => (
+            {displayIncidents.map((incident) => (
               incident.id !== selectedIncident?.id && (
                 <IncidentCard 
                   key={incident.id} 
