@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { MapPin, Search, X, Navigation2, Loader2, Star } from 'lucide-react';
 import { usePlacesAutocomplete } from '../hooks/usePlacesAutocomplete';
 import { useLocation } from '../hooks/useLocation';
+import { getAppCheckStatus } from '../lib/appCheck';
 
 interface LocationAutocompleteProps {
   value: string;
@@ -31,6 +32,7 @@ const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
   const [localPredictions, setLocalPredictions] = useState<any[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const suggestionsRef = useRef<HTMLDivElement>(null);
+  const [appCheckStatus, setAppCheckStatus] = useState<any>(null);
   
   const { latitude, longitude, hasLocation } = useLocation();
   const {
@@ -41,6 +43,16 @@ const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
     getPlaceDetails,
     clearPredictions
   } = usePlacesAutocomplete();
+
+  // Check App Check status on mount
+  useEffect(() => {
+    const status = getAppCheckStatus();
+    setAppCheckStatus(status);
+    
+    if (!status.hasRecaptchaKey) {
+      console.warn('⚠️ reCAPTCHA site key not configured - Places API may be rate limited');
+    }
+  }, []);
 
   // Popular locations in Eldorado Park area
   const popularLocations = [

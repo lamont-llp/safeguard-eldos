@@ -6,6 +6,46 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
 }
 
+// Firebase App Check verification
+async function verifyAppCheckToken(token: string): Promise<boolean> {
+  if (!token) {
+    return false;
+  }
+
+  try {
+    const FIREBASE_PROJECT_ID = Deno.env.get('FIREBASE_PROJECT_ID');
+    if (!FIREBASE_PROJECT_ID) {
+      console.warn('Firebase Project ID not configured - skipping App Check verification');
+      return true; // Allow request if App Check is not configured
+    }
+
+    // Verify App Check token with Firebase
+    const response = await fetch(
+      `https://firebaseappcheck.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/apps/-:verifyAppCheckToken`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          app_check_token: token
+        })
+      }
+    );
+
+    if (response.ok) {
+      const result = await response.json();
+      return result.ttl && result.ttl !== '0s'; // Token is valid if it has a TTL
+    }
+
+    console.warn('App Check token verification failed:', response.status);
+    return false;
+  } catch (error) {
+    console.error('App Check verification error:', error);
+    return false; // Fail open - allow request if verification fails
+  }
+}
+
 interface PlacesPrediction {
   place_id: string;
   description: string;
@@ -51,6 +91,32 @@ serve(async (req) => {
     if (!GOOGLE_PLACES_API_KEY) {
       throw new Error('Google Places API key not configured')
     }
+
+    // Check for App Check token in headers
+    const appCheckToken = req.headers.get('X-Firebase-AppCheck');
+    const isAppCheckValid = await verifyAppCheckToken(appCheckToken || '');
+    
+    if (!isAppCheckValid && appCheckToken) {
+      // If App Check token is provided but invalid, reject the request
+      console.warn('Invalid App Check token provided');
+      return new Response(
+        JSON.stringify({ 
+          error: 'Invalid App Check token',
+          predictions: [] 
+        }),
+        { 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 401 
+        }
+      );
+    }
+
+    // Log App Check status for monitoring
+    console.log('App Check status:', {
+      tokenProvided: !!appCheckToken,
+      tokenValid: isAppCheckValid,
+      action: action
+    });
 
     if (action === 'autocomplete') {
       const input = url.searchParams.get('input')
