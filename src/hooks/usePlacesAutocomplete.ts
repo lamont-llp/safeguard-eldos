@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { getAppCheckToken, isAppCheckAvailable } from '../lib/appCheck';
 
 interface PlacePrediction {
   place_id: string;
@@ -58,34 +57,6 @@ export const usePlacesAutocomplete = () => {
     return session.access_token;
   };
 
-  // Get headers with App Check token if available
-  const getRequestHeaders = async () => {
-    const authToken = await getAuthToken();
-    const headers: Record<string, string> = {
-      'Authorization': `Bearer ${authToken}`,
-      'Content-Type': 'application/json',
-      'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY
-    };
-
-    // Add App Check token if available
-    if (isAppCheckAvailable()) {
-      try {
-        const appCheckToken = await getAppCheckToken();
-        if (appCheckToken) {
-          headers['X-Firebase-AppCheck'] = appCheckToken;
-          console.log('✅ App Check token added to request');
-        }
-      } catch (error) {
-        console.warn('⚠️ Failed to get App Check token:', error);
-        // Continue without App Check token - the request may still work
-      }
-    } else {
-      console.warn('⚠️ App Check not available - requests may be rate limited');
-    }
-
-    return headers;
-  };
-
   // Search for place predictions
   const searchPlaces = async (input: string): Promise<PlacePrediction[]> => {
     if (input.length < 2) {
@@ -98,7 +69,7 @@ export const usePlacesAutocomplete = () => {
 
     try {
       const functionUrl = getFunctionUrl();
-      const headers = await getRequestHeaders();
+      const authToken = await getAuthToken();
 
       // Construct URL with query parameters
       const url = new URL(functionUrl);
@@ -110,7 +81,11 @@ export const usePlacesAutocomplete = () => {
 
       const response = await fetch(url.toString(), {
         method: 'GET',
-        headers
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+          'Content-Type': 'application/json',
+          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY
+        }
       });
 
       if (!response.ok) {
@@ -144,7 +119,7 @@ export const usePlacesAutocomplete = () => {
 
     try {
       const functionUrl = getFunctionUrl();
-      const headers = await getRequestHeaders();
+      const authToken = await getAuthToken();
 
       // Construct URL with query parameters
       const url = new URL(functionUrl);
@@ -156,7 +131,11 @@ export const usePlacesAutocomplete = () => {
 
       const response = await fetch(url.toString(), {
         method: 'GET',
-        headers
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+          'Content-Type': 'application/json',
+          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY
+        }
       });
 
       if (!response.ok) {

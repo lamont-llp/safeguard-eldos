@@ -109,13 +109,8 @@ src/components/map/
    VITE_FIREBASE_APP_ID=your_app_id
    VITE_FIREBASE_VAPID_KEY=your_vapid_key
    
-   # reCAPTCHA v3 Site Key for App Check (Places API security)
-   VITE_RECAPTCHA_SITE_KEY=your_recaptcha_v3_site_key
-   
    # Supabase Secrets (set in Supabase Dashboard)
    FIREBASE_SERVICE_ACCOUNT_KEY=your_firebase_service_account_json
-   FIREBASE_PROJECT_ID=your_firebase_project_id
-   GOOGLE_PLACES_API_KEY=your_google_places_api_key
    ```
 
 4. **Database Setup**
@@ -124,7 +119,6 @@ src/components/map/
    - Enable PostGIS extension for geospatial features
    - Set up Firebase project and configure FCM with HTTP v1 API
    - Add Firebase Service Account Key to Supabase Secrets
-   - Configure Google Places API with App Check for enhanced security
 
 5. **Start Development Server**
    ```bash
@@ -169,14 +163,12 @@ SafeGuard Eldos can be installed as a Progressive Web App:
 - **Input Validation**: Comprehensive data sanitization
 - **Rate Limiting**: Protection against abuse
 - **OAuth 2.0**: Secure FCM authentication using service account keys
-- **App Check**: Firebase App Check with reCAPTCHA v3 for API security
 
 ### **Privacy Controls**
 - **Notification Preferences**: Granular control over alerts
 - **Location Radius**: Customizable monitoring area
 - **Quiet Hours**: Scheduled notification silence
 - **Data Retention**: Automatic cleanup of old data
-- **App Check Security**: Enhanced API protection with reCAPTCHA v3
 
 ## 🌍 Community Impact
 

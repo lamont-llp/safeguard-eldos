@@ -7,7 +7,6 @@ import { useIncidentsRealtime } from './hooks/useIncidentsRealtime';
 import { useNotifications } from './hooks/useNotifications';
 import { useLocation } from './hooks/useLocation';
 import { isMessagingSupported } from './lib/firebase';
-import { initializeFirebaseAppCheck, getAppCheckStatus } from './lib/appCheck';
 import Dashboard from './pages/Dashboard';
 import ReportIncident from './pages/ReportIncident';
 import SafeRoutes from './pages/SafeRoutes';
@@ -34,26 +33,6 @@ const AppContent = () => {
     };
 
     initializeNotifications();
-  }, []);
-
-  useEffect(() => {
-    // Initialize Firebase App Check for enhanced security
-    const initializeAppCheck = async () => {
-      try {
-        const initialized = await initializeFirebaseAppCheck();
-        const status = getAppCheckStatus();
-        
-        if (initialized) {
-          console.log('🔒 App Check initialized - enhanced API security enabled');
-        } else {
-          console.warn('⚠️ App Check not initialized:', status);
-        }
-      } catch (error) {
-        console.error('❌ App Check initialization failed:', error);
-      }
-    };
-
-    initializeAppCheck();
   }, []);
 
   useEffect(() => {
