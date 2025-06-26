@@ -12,6 +12,8 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({ isOpen, onClose
   const {
     notifications,
     preferences,
+    fcmSupported,
+    fcmToken,
     unreadCount,
     markAsRead,
     markAllAsRead,
@@ -313,21 +315,41 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({ isOpen, onClose
         </div>
 
         {/* Enable Notifications Banner */}
-        {!preferences.pushEnabled && (
+        {!preferences.pushEnabled && fcmSupported && (
           <div className="bg-blue-50 border-b border-blue-200 p-4">
             <div className="flex items-start space-x-3">
               <Bell className="w-5 h-5 text-blue-600 mt-0.5" />
               <div className="flex-1">
                 <h3 className="font-medium text-blue-900">Enable Notifications</h3>
                 <p className="text-blue-700 text-sm mt-1">
-                  Get instant alerts for safety incidents and community updates
+                  Get instant push notifications for safety incidents and community updates
                 </p>
+                {fcmToken && (
+                  <p className="text-blue-600 text-xs mt-1">
+                    ✓ Device registered for push notifications
+                  </p>
+                )}
                 <button
                   onClick={handleEnableNotifications}
                   className="mt-2 bg-blue-600 text-white px-3 py-1 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
                 >
                   Enable Now
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* FCM Status Info */}
+        {!fcmSupported && (
+          <div className="bg-amber-50 border-b border-amber-200 p-4">
+            <div className="flex items-start space-x-3">
+              <Bell className="w-5 h-5 text-amber-600 mt-0.5" />
+              <div className="flex-1">
+                <h3 className="font-medium text-amber-900">Limited Notification Support</h3>
+                <p className="text-amber-700 text-sm mt-1">
+                  Your browser has limited support for push notifications. You'll still receive in-app notifications.
+                </p>
               </div>
             </div>
           </div>

@@ -26,7 +26,7 @@ A comprehensive community safety platform designed specifically for Eldorado Par
 
 ### 📱 **Progressive Web App (PWA)**
 - **Offline Functionality**: Report incidents without internet connection
-- **Push Notifications**: Real-time safety alerts and community updates
+- **Push Notifications**: Firebase Cloud Messaging for real-time alerts
 - **Mobile-first Design**: Optimized for smartphones and tablets
 - **Background Sync**: Automatic data synchronization when online
 
@@ -48,6 +48,7 @@ A comprehensive community safety platform designed specifically for Eldorado Par
 ### **Backend Infrastructure**
 - **Supabase** for real-time database and authentication
 - **PostGIS** for advanced geospatial operations
+- **Firebase Cloud Messaging** for push notifications
 - **Row-Level Security (RLS)** for data protection
 - **Real-time Subscriptions** for live updates
 
@@ -100,12 +101,20 @@ src/components/map/
    VITE_SUPABASE_URL=your_supabase_project_url
    VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
    VITE_MAPBOX_TOKEN=your_mapbox_access_token
+   
+   # Firebase Configuration (for push notifications)
+   VITE_FIREBASE_API_KEY=your_firebase_api_key
+   VITE_FIREBASE_PROJECT_ID=your_project_id
+   VITE_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
+   VITE_FIREBASE_APP_ID=your_app_id
+   VITE_FIREBASE_VAPID_KEY=your_vapid_key
    ```
 
 4. **Database Setup**
    - Create a new Supabase project
    - Run the migration files in `/supabase/migrations/`
    - Enable PostGIS extension for geospatial features
+   - Set up Firebase project and configure FCM
 
 5. **Start Development Server**
    ```bash
