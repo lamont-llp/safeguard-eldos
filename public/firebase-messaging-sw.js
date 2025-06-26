@@ -7,13 +7,13 @@ importScripts('https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-comp
 
 // Firebase configuration - these will be replaced with actual values
 const firebaseConfig = {
-  apiKey: `${import.meta.env.VITE_FIREBASE_API_KEY}`,
-  authDomain: `${import.meta.env.VITE_FIREBASE_AUTH_DOMAIN}`,
-  projectId: `${import.meta.env.VITE_FIREBASE_PROJECT_ID}`,
-  storageBucket: `${import.meta.env.VITE_FIREBASE_STORAGE_BUCKET}`,
-  messagingSenderId: `${import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID}`,
-  appId: `${import.meta.env.VITE_FIREBASE_APP_ID}`,
-  measurementId: `${import.meta.env.VITE_FIREBASE_MEASUREMENT_ID}`
+  apiKey: 'AIzaSyAmrd22o05OCUvK6S9JNdcpDDcu25GYIgM',
+  authDomain: 'safeguard-eldos.firebaseapp.com',
+  projectId: 'safeguard-eldos',
+  storageBucket: 'safeguard-eldos.firebasestorage.app',
+  messagingSenderId: '554502067933',
+  appId: '1:554502067933:web:7d65d05676eb8468bded34',
+  measurementId: 'G-2MZJHE88DT'
 };
 
 // Initialize Firebase
