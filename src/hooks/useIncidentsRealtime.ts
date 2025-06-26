@@ -361,11 +361,11 @@ export const useIncidentsRealtime = () => {
   // ENHANCED: Validate notification content for security
   const validateNotificationContent = useCallback((title: string, options: NotificationOptions) => {
     // Sanitize title
-    const sanitizedTitle = title.replace(/<[^>]*>/g, '').substring(0, 100);
+    const sanitizedTitle = title.replace(/[<>]/g, '').substring(0, 100);
     
     // Sanitize body
     const sanitizedBody = options.body ? 
-      options.body.replace(/<[^>]*>/g, '').substring(0, 300) : 
+      options.body.replace(/[<>]/g, '').substring(0, 300) : 
       undefined;
     
     // Validate URLs
