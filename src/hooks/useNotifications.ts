@@ -63,7 +63,7 @@ export const useNotifications = () => {
   // Store FCM token when user is authenticated
   useEffect(() => {
     const storeFCMToken = async () => {
-      if (user && profile && fcmSupported && preferences.pushEnabled) {
+      if (user && profile && fcmSupported && preferences.pushEnabled && Notification.permission === 'granted') {
         try {
           const token = await getCurrentFCMToken();
           if (token && token !== fcmToken) {
