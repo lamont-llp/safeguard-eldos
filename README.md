@@ -48,7 +48,7 @@ A comprehensive community safety platform designed specifically for Eldorado Par
 ### **Backend Infrastructure**
 - **Supabase** for real-time database and authentication
 - **PostGIS** for advanced geospatial operations
-- **Firebase Cloud Messaging** for push notifications
+- **Firebase Cloud Messaging (HTTP v1 API)** for secure push notifications
 - **Row-Level Security (RLS)** for data protection
 - **Real-time Subscriptions** for live updates
 
@@ -108,13 +108,17 @@ src/components/map/
    VITE_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
    VITE_FIREBASE_APP_ID=your_app_id
    VITE_FIREBASE_VAPID_KEY=your_vapid_key
+   
+   # Supabase Secrets (set in Supabase Dashboard)
+   FIREBASE_SERVICE_ACCOUNT_KEY=your_firebase_service_account_json
    ```
 
 4. **Database Setup**
    - Create a new Supabase project
    - Run the migration files in `/supabase/migrations/`
    - Enable PostGIS extension for geospatial features
-   - Set up Firebase project and configure FCM
+   - Set up Firebase project and configure FCM with HTTP v1 API
+   - Add Firebase Service Account Key to Supabase Secrets
 
 5. **Start Development Server**
    ```bash
@@ -158,6 +162,7 @@ SafeGuard Eldos can be installed as a Progressive Web App:
 - **RLS Policies**: Database-level access controls
 - **Input Validation**: Comprehensive data sanitization
 - **Rate Limiting**: Protection against abuse
+- **OAuth 2.0**: Secure FCM authentication using service account keys
 
 ### **Privacy Controls**
 - **Notification Preferences**: Granular control over alerts
