@@ -798,12 +798,6 @@ export const useIncidentsRealtime = () => {
   const cleanupSubscriptions = useCallback(() => {
     console.log('Cleaning up real-time subscriptions...');
     
-    // Clear any pending timeouts
-    if (retryTimeoutRef.current) {
-      clearTimeout(retryTimeoutRef.current);
-      retryTimeoutRef.current = null;
-    }
-    
     if (incidentChannelRef.current) {
       try {
         incidentChannelRef.current.unsubscribe();
@@ -873,15 +867,6 @@ export const useIncidentsRealtime = () => {
               setupSubscriptions();
             }
           }, delay);
-          
-          // Store timeout reference for cleanup
-          retryTimeoutRef.current = setTimeout(() => {
-            if (isSubscribedRef.current && reconnectAttemptsRef.current < maxReconnectAttempts) {
-              console.log(`Attempting to reconnect incident channel (attempt ${reconnectAttemptsRef.current}/${maxReconnectAttempts})...`);
-              cleanupSubscriptions();
-              setupSubscriptions();
-            }
-          }, delay) as any;
         } else if (status === 'TIMED_OUT') {
           console.warn('Incident channel subscription timed out');
         } else if (status === 'CLOSED') {
@@ -908,15 +893,6 @@ export const useIncidentsRealtime = () => {
               setupSubscriptions();
             }
           }, delay);
-          
-          // Store timeout reference for cleanup
-          retryTimeoutRef.current = setTimeout(() => {
-            if (isSubscribedRef.current && reconnectAttemptsRef.current < maxReconnectAttempts) {
-              console.log(`Attempting to reconnect alert channel (attempt ${reconnectAttemptsRef.current}/${maxReconnectAttempts})...`);
-              cleanupSubscriptions();
-              setupSubscriptions();
-            }
-          }, delay) as any;
         } else if (status === 'TIMED_OUT') {
           console.warn('Alert channel subscription timed out');
         } else if (status === 'CLOSED') {
@@ -934,12 +910,12 @@ export const useIncidentsRealtime = () => {
       
       // Retry setup with exponential backoff
       const delay = Math.min(Math.pow(2, reconnectAttemptsRef.current) * 1000, 30000);
-      retryTimeoutRef.current = setTimeout(() => {
+      setTimeout(() => {
         if (reconnectAttemptsRef.current < maxReconnectAttempts) {
           console.log('Retrying subscription setup after error...');
           setupSubscriptions();
         }
-      }, delay) as any;
+      }, delay);
     }
   }, [handleIncidentNotification, handleSafetyAlert, cleanupSubscriptions]);
 

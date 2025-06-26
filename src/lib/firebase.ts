@@ -95,12 +95,6 @@ export const getCurrentFCMToken = async (): Promise<string | null> => {
   }
 
   try {
-    // Check if we're in a valid context for getting tokens
-    if (typeof window === 'undefined' || !('serviceWorker' in navigator)) {
-      console.warn('Service Worker not supported, cannot get FCM token');
-      return null;
-    }
-    
     const token = await getToken(messaging, {
       vapidKey: vapidKey
     });
