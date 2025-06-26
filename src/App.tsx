@@ -6,6 +6,7 @@ import { AuthProvider } from './contexts/AuthContext';
 import { useIncidentsRealtime } from './hooks/useIncidentsRealtime';
 import { useNotifications } from './hooks/useNotifications';
 import { useLocation } from './hooks/useLocation';
+import { isMessagingSupported } from './lib/firebase';
 import Dashboard from './pages/Dashboard';
 import ReportIncident from './pages/ReportIncident';
 import SafeRoutes from './pages/SafeRoutes';
@@ -35,16 +36,37 @@ const AppContent = () => {
   }, []);
 
   useEffect(() => {
-    // Register service worker for PWA functionality
+    // Register service workers for PWA and FCM functionality
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js')
-          .then((registration) => {
-            console.log('SW registered: ', registration);
-          })
-          .catch((registrationError) => {
-            console.log('SW registration failed: ', registrationError);
-          });
+        // Register Firebase messaging service worker if FCM is supported
+        if (isMessagingSupported()) {
+          navigator.serviceWorker.register('/firebase-messaging-sw.js')
+            .then((registration) => {
+              console.log('Firebase SW registered: ', registration);
+            })
+            .catch((registrationError) => {
+              console.log('Firebase SW registration failed: ', registrationError);
+              
+              // Fallback to regular service worker
+              navigator.serviceWorker.register('/sw.js')
+                .then((registration) => {
+                  console.log('Fallback SW registered: ', registration);
+                })
+                .catch((fallbackError) => {
+                  console.log('Fallback SW registration failed: ', fallbackError);
+                });
+            });
+        } else {
+          // Register regular service worker if FCM is not supported
+          navigator.serviceWorker.register('/sw.js')
+            .then((registration) => {
+              console.log('SW registered: ', registration);
+            })
+            .catch((registrationError) => {
+              console.log('SW registration failed: ', registrationError);
+            });
+        }
       });
     }
   }, []);
