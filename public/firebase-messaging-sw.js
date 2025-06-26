@@ -7,13 +7,13 @@ importScripts('https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-comp
 
 // Firebase configuration - these will be replaced with actual values
 const firebaseConfig = {
-  apiKey: "your_firebase_api_key",
-  authDomain: "your_project_id.firebaseapp.com",
-  projectId: "your_project_id",
-  storageBucket: "your_project_id.appspot.com",
-  messagingSenderId: "your_messaging_sender_id",
-  appId: "your_firebase_app_id",
-  measurementId: "your_measurement_id"
+  apiKey: ${import.meta.env.VITE_FIREBASE_API_KEY},
+  authDomain: ${import.meta.env.VITE_FIREBASE_AUTH_DOMAIN},
+  projectId: ${import.meta.env.VITE_FIREBASE_PROJECT_ID},
+  storageBucket: ${import.meta.env.VITE_FIREBASE_STORAGE_BUCKET},
+  messagingSenderId: ${import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID},
+  appId: ${import.meta.env.VITE_FIREBASE_APP_ID},
+  measurementId: ${import.meta.env.VITE_FIREBASE_MEASUREMENT_ID}
 };
 
 // Initialize Firebase
