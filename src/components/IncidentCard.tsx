@@ -85,7 +85,7 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
   // Component lifecycle management
   const isMountedRef = useRef(true);
   const abortControllerRef = useRef<AbortController | null>(null);
-  const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const retryTimeoutRef = useRef<number | null>(null);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -96,6 +96,7 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
       }
       if (retryTimeoutRef.current) {
         clearTimeout(retryTimeoutRef.current);
+        retryTimeoutRef.current = null;
       }
     };
   }, []);
@@ -399,7 +400,7 @@ const IncidentCard: React.FC<IncidentCardProps> = ({ incident, onVerify }) => {
     
     if (timeSinceLastAttempt < minDelay) {
       const remainingDelay = minDelay - timeSinceLastAttempt;
-      retryTimeoutRef.current = setTimeout(handleRetry, remainingDelay);
+      retryTimeoutRef.current = window.setTimeout(handleRetry, remainingDelay);
       return;
     }
 

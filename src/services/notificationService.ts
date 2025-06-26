@@ -213,9 +213,16 @@ class NotificationService {
 
     // Auto-close non-urgent notifications after 5 seconds
     if (notification.priority !== 'urgent') {
-      setTimeout(() => {
+      const timeoutId = setTimeout(() => {
         browserNotification.close();
       }, 5000);
+      
+      // Clear timeout if notification is manually closed
+      browserNotification.onclose = () => {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+      };
     }
   }
 

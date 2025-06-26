@@ -282,8 +282,12 @@ export const useIncidents = () => {
       });
     };
 
-    const interval = setInterval(cleanup, 10000); // Check every 10 seconds
-    return () => clearInterval(interval);
+    const intervalId = setInterval(cleanup, 10000); // Check every 10 seconds
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
   }, []);
 
   const loadIncidents = useCallback(async (): Promise<HookResponse<Incident[]>> => {
