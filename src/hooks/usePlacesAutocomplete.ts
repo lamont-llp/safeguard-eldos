@@ -18,6 +18,9 @@ interface PlaceDetails {
   types: string[];
 }
 
+// Add a type for valid actions
+export type PlacesAction = 'autocomplete' | 'details';
+
 export const usePlacesAutocomplete = () => {
   const [predictions, setPredictions] = useState<PlacePrediction[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -58,7 +61,12 @@ export const usePlacesAutocomplete = () => {
   };
 
   // Search for place predictions
-  const searchPlaces = async (input: string): Promise<PlacePrediction[]> => {
+  const searchPlaces = async (input: string, action: PlacesAction = 'autocomplete'): Promise<PlacePrediction[]> => {
+    if (action !== 'autocomplete') {
+      setError('Invalid action for searchPlaces.');
+      setPredictions([]);
+      return [];
+    }
     if (input.length < 2) {
       setPredictions([]);
       return [];
@@ -68,6 +76,7 @@ export const usePlacesAutocomplete = () => {
     setError(null);
 
     try {
+<<<<<<< HEAD
       const functionUrl = getFunctionUrl();
       const authToken = await getAuthToken();
 
@@ -86,7 +95,35 @@ export const usePlacesAutocomplete = () => {
           'Content-Type': 'application/json',
           'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY
         }
+||||||| parent of 1128666 (Enhance usePlacesAutocomplete hook with action types for search and details)
+      const { data, error } = await supabase.functions.invoke('places-autocomplete', {
+        body: null,
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      }, {
+        query: {
+          action: 'autocomplete',
+          input: input,
+          sessiontoken: sessionToken
+        }
+=======
+      const params = new URLSearchParams({
+        action: action,
+        input: input,
+        sessiontoken: sessionToken
+>>>>>>> 1128666 (Enhance usePlacesAutocomplete hook with action types for search and details)
       });
+      const { data, error } = await supabase.functions.invoke(
+        `places-autocomplete?${params.toString()}`,
+        {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        }
+      );
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -113,11 +150,16 @@ export const usePlacesAutocomplete = () => {
   };
 
   // Get place details by place_id
-  const getPlaceDetails = async (placeId: string): Promise<PlaceDetails | null> => {
+  const getPlaceDetails = async (placeId: string, action: PlacesAction = 'details'): Promise<PlaceDetails | null> => {
+    if (action !== 'details') {
+      setError('Invalid action for getPlaceDetails.');
+      return null;
+    }
     setIsLoading(true);
     setError(null);
 
     try {
+<<<<<<< HEAD
       const functionUrl = getFunctionUrl();
       const authToken = await getAuthToken();
 
@@ -136,7 +178,35 @@ export const usePlacesAutocomplete = () => {
           'Content-Type': 'application/json',
           'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY
         }
+||||||| parent of 1128666 (Enhance usePlacesAutocomplete hook with action types for search and details)
+      const { data, error } = await supabase.functions.invoke('places-autocomplete', {
+        body: null,
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      }, {
+        query: {
+          action: 'details',
+          place_id: placeId,
+          sessiontoken: sessionToken
+        }
+=======
+      const params = new URLSearchParams({
+        action: action,
+        place_id: placeId,
+        sessiontoken: sessionToken
+>>>>>>> 1128666 (Enhance usePlacesAutocomplete hook with action types for search and details)
       });
+      const { data, error } = await supabase.functions.invoke(
+        `places-autocomplete?${params.toString()}`,
+        {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        }
+      );
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -169,7 +239,7 @@ export const usePlacesAutocomplete = () => {
     }
 
     debounceRef.current = setTimeout(() => {
-      searchPlaces(input);
+      searchPlaces(input, 'autocomplete');
     }, delay);
   };
 
