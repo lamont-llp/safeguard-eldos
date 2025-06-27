@@ -40,26 +40,6 @@ export const usePlacesAutocomplete = () => {
     generateSessionToken();
   }, []);
 
-  // Get the Supabase function URL and auth token
-  const getFunctionUrl = () => {
-    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-    if (!supabaseUrl) {
-      throw new Error('VITE_SUPABASE_URL environment variable is not set');
-    }
-    return `${supabaseUrl}/functions/v1/places-autocomplete`;
-  };
-
-  const getAuthToken = async () => {
-    const { data: { session }, error } = await supabase.auth.getSession();
-    if (error) {
-      throw new Error(`Authentication error: ${error.message}`);
-    }
-    if (!session?.access_token) {
-      throw new Error('No valid session found. Please sign in.');
-    }
-    return session.access_token;
-  };
-
   // Search for place predictions
   const searchPlaces = async (input: string, action: PlacesAction = 'autocomplete'): Promise<PlacePrediction[]> => {
     if (action !== 'autocomplete') {
@@ -76,44 +56,10 @@ export const usePlacesAutocomplete = () => {
     setError(null);
 
     try {
-<<<<<<< HEAD
-      const functionUrl = getFunctionUrl();
-      const authToken = await getAuthToken();
-
-      // Construct URL with query parameters
-      const url = new URL(functionUrl);
-      url.searchParams.set('action', 'autocomplete');
-      url.searchParams.set('input', input);
-      url.searchParams.set('sessiontoken', sessionToken);
-
-      console.log('Making places autocomplete request to:', url.toString());
-
-      const response = await fetch(url.toString(), {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${authToken}`,
-          'Content-Type': 'application/json',
-          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY
-        }
-||||||| parent of 1128666 (Enhance usePlacesAutocomplete hook with action types for search and details)
-      const { data, error } = await supabase.functions.invoke('places-autocomplete', {
-        body: null,
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      }, {
-        query: {
-          action: 'autocomplete',
-          input: input,
-          sessiontoken: sessionToken
-        }
-=======
       const params = new URLSearchParams({
         action: action,
         input: input,
         sessiontoken: sessionToken
->>>>>>> 1128666 (Enhance usePlacesAutocomplete hook with action types for search and details)
       });
       const { data, error } = await supabase.functions.invoke(
         `places-autocomplete?${params.toString()}`,
@@ -125,18 +71,9 @@ export const usePlacesAutocomplete = () => {
         }
       );
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
-      }
+      if (error) throw error;
 
-      const data = await response.json();
-
-      if (data.error) {
-        throw new Error(data.error);
-      }
-
-      const results = data.predictions || [];
+      const results = data?.predictions || [];
       setPredictions(results);
       return results;
     } catch (err: any) {
@@ -159,44 +96,10 @@ export const usePlacesAutocomplete = () => {
     setError(null);
 
     try {
-<<<<<<< HEAD
-      const functionUrl = getFunctionUrl();
-      const authToken = await getAuthToken();
-
-      // Construct URL with query parameters
-      const url = new URL(functionUrl);
-      url.searchParams.set('action', 'details');
-      url.searchParams.set('place_id', placeId);
-      url.searchParams.set('sessiontoken', sessionToken);
-
-      console.log('Making place details request to:', url.toString());
-
-      const response = await fetch(url.toString(), {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${authToken}`,
-          'Content-Type': 'application/json',
-          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY
-        }
-||||||| parent of 1128666 (Enhance usePlacesAutocomplete hook with action types for search and details)
-      const { data, error } = await supabase.functions.invoke('places-autocomplete', {
-        body: null,
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      }, {
-        query: {
-          action: 'details',
-          place_id: placeId,
-          sessiontoken: sessionToken
-        }
-=======
       const params = new URLSearchParams({
         action: action,
         place_id: placeId,
         sessiontoken: sessionToken
->>>>>>> 1128666 (Enhance usePlacesAutocomplete hook with action types for search and details)
       });
       const { data, error } = await supabase.functions.invoke(
         `places-autocomplete?${params.toString()}`,
@@ -208,16 +111,7 @@ export const usePlacesAutocomplete = () => {
         }
       );
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
-      }
-
-      const data = await response.json();
-
-      if (data.error) {
-        throw new Error(data.error);
-      }
+      if (error) throw error;
 
       // Generate new session token after using place details
       generateSessionToken();
